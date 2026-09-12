@@ -29,7 +29,11 @@ def get_ai_client():
             logger.error(f"Gemini klientini ishga tushirishda xatolik: {e}")
     return _client
 
-AI_DISCLAIMER = "\n\n🤖 _[Bu xabar Sun'iy Intellekt (AI) tomonidan avtomatik yuborildi]_"
+def get_ai_disclaimer() -> str:
+    disc = os.getenv("AI_DISCLAIMER", "— AI yordamchi 🤖").strip()
+    if not disc or disc.lower() in ("none", "false", "0"):
+        return ""
+    return f"\n\n_{disc}_"
 
 async def generate_ai_reply(sender_name: str, message_text: str, is_first_time: bool = False) -> str | None:
     """Kelgan xabarga Gemini AI orqali aqlli javob matni tayyorlaydi."""
@@ -79,7 +83,7 @@ async def generate_ai_reply(sender_name: str, message_text: str, is_first_time: 
             )
         )
         if response and response.text:
-            return response.text.strip() + AI_DISCLAIMER
+            return response.text.strip() + get_ai_disclaimer()
     except Exception as e:
         logger.error(f"Gemini AI javob yaratishda xatolik yuz berdi: {e}")
 
