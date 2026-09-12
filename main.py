@@ -48,7 +48,7 @@ API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 
 # Boshqaruv sozlamalari
-REPLY_DELAY_SECONDS = int(os.getenv("REPLY_DELAY_SECONDS", "2"))
+REPLY_DELAY_SECONDS = int(os.getenv("REPLY_DELAY_SECONDS", "0"))
 BOT_PAUSED = False
 
 # Standart xabarlar
@@ -287,8 +287,9 @@ async def auto_reply_handler(event):
         if handled:
             return
 
-    # Kelgan barcha xabarlarni Anti-Delete uchun keshga va DB ga saqlaymiz
-    await save_incoming_event(client, event)
+    # Faqat shaxsiy (PM) xabarlarni Anti-Delete uchun keshga va DB ga saqlaymiz
+    if event.is_private:
+        await save_incoming_event(client, event)
 
     if BOT_PAUSED:
         return

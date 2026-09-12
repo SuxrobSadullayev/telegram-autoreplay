@@ -72,17 +72,39 @@ def get_media_type_str(message) -> str | None:
 
 async def save_incoming_event(client: TelegramClient, event):
     """
-    Kelgan har bir xabar (matn, rasm, ovoz, video) ni ma'lumotlar bazasiga va keshga saqlaydi.
+    Faqat shaxsiy (PM) xabarlarni (matn, rasm, ovoz, video) ma'lumotlar bazasiga va keshga saqlaydi.
+    Guruhlar va kanallardagi xabarlar saqlanmaydi.
     Agar suhbatdosh xabarni o'chirsa, to'liq tiklab beriladi.
     """
     try:
+        # Faqat shaxsiy (private) xabarlarni saqlaymiz: guruh va kanallar inkor qilinadi
+        if not getattr(event, "is_private", False):
+            return
+
+        # Kanal yoki guruh bo'lsa (yoki chat_id manfiy bo'lsa) saqlanmaydi
+        if getattr(event, "is_channel", False) or getattr(event, "is_group", False):
+            return
+
+        if event.chat_id and event.chat_id < 0:
+            return
+
+        # Saqlangan xabarlar (Saved Messages) yoki o'zimizning chatimiz bo'lsa saqlanmaydi
+        me = await client.get_me()
+        if event.chat_id == me.id:
+            return
+
         sender = await event.get_sender()
-        sender_name = "Foydalanuvchi"
-        sender_id = event.sender_id or 0
-        if sender:
-            sender_name = getattr(sender, "first_name", "") or getattr(sender, "title", "Foydalanuvchi")
-            if getattr(sender, "last_name", None):
-                sender_name += f" {sender.last_name}"
+        if not sender:
+            return
+
+        # Botlardan kelgan xabarlarni saqlamaslik
+        if getattr(sender, "bot", False) or getattr(sender, "id", 0) in (777000, 42777):
+            return
+
+        sender_name = getattr(sender, "first_name", "") or getattr(sender, "title", "Foydalanuvchi")
+        sender_id = event.sender_id or getattr(sender, "id", 0)
+        if getattr(sender, "last_name", None):
+            sender_name += f" {sender.last_name}"
 
         text = event.raw_text or ""
         media_type = get_media_type_str(event.message)
@@ -149,9 +171,21 @@ def get_saved_message(msg_id: int):
 
 async def handle_deleted_message_event(client: TelegramClient, event):
     """O'chirilgan xabarlarni tutib, Saqlangan xabarlar (Saved Messages) ga forward qiladi."""
+    # Faqat shaxsiy yozishmalardagi o'chirilgan xabarlar ko'riladi: guruh va kanallar inkor qilinadi
+    if getattr(event, "is_channel", False) or getattr(event, "is_group", False):
+        return
+
+    if event.chat_id and event.chat_id < 0:
+        return
+
     for msg_id in event.deleted_ids:
         saved = get_saved_message(msg_id)
         if not saved:
+            continue
+
+        # Agar bazadagi xabar guruh yoki kanalga tegishli bo'lsa (chat_id manfiy bo'lsa), inkor qilamiz
+        saved_chat_id = saved.get("chat_id")
+        if saved_chat_id and saved_chat_id < 0:
             continue
 
         sender_name = saved["sender_name"]
@@ -161,12 +195,12 @@ async def handle_deleted_message_event(client: TelegramClient, event):
         media_type = saved["media_type"]
         media_path = saved["media_path"]
 
-        logger.info(f"O'chirilgan xabar aniqlandi! Yuboruvchi: {sender_name}, Media: {media_type or 'Matn'}")
+        logger.info(f"O'chirilgan shaxsiy xabar aniqlandi! Yuboruvchi: {sender_name}, Media: {media_type or 'Matn'}")
 
         # Agar keshda media mavjud bo'lsa
         if media_path and os.path.exists(media_path):
             caption = (
-                f"🗑 **O'chirilgan media tiklandi!**\n\n"
+                f"🗑 **O'chirilgan shaxsiy media tiklandi!**\n\n"
                 f"👤 **Yuboruvchi:** {sender_name} (ID: `{sender_id}`)\n"
                 f"📁 **Media turi:** {media_type}\n"
                 f"⏰ **Yuborilgan vaqti:** {created_at}\n"
@@ -181,7 +215,7 @@ async def handle_deleted_message_event(client: TelegramClient, event):
         elif text:
             # Faqat matnli xabar
             alert_text = (
-                f"🗑 **O'chirilgan xabar aniqlandi!**\n\n"
+                f"🗑 **O'chirilgan shaxsiy xabar aniqlandi!**\n\n"
                 f"👤 **Yuboruvchi:** {sender_name} (ID: `{sender_id}`)\n"
                 f"⏰ **Yuborilgan vaqti:** {created_at}\n"
                 f"💬 **O'chirilgan matn:**\n\"{text}\""
@@ -190,6 +224,14 @@ async def handle_deleted_message_event(client: TelegramClient, event):
                 await client.send_message("me", alert_text)
             except Exception as e:
                 logger.error(f"O'chirilgan matnni 'me' ga yuborishda xatolik: {e}")
+
+        # Qayta ogohlantirmaslik uchun bazadan o'chirib tashlaymiz
+        try:
+            with sqlite3.connect(DB_FILE) as conn:
+                conn.execute("DELETE FROM saved_messages WHERE msg_id = ?", (msg_id,))
+                conn.commit()
+        except Exception as del_err:
+            logger.warning(f"O'chirilgan xabarni DB dan tozalashda xatolik: {del_err}")
 
 def clean_old_media_cache(max_age_hours: int = 48):
     """48 soatdan eski kesh fayllarni tozalab disk joyini tejaydi."""
