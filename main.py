@@ -57,6 +57,12 @@ from services.text_editor_service import (
 from services.purge_service import handle_del_command, handle_purge_command
 from services.weather_currency_service import handle_currency_command, handle_weather_command
 from services.tts_service import handle_voice_command
+from services.qr_service import handle_qr_command
+from services.sticker_service import handle_sticker_command, handle_unsticker_command
+from services.search_service import handle_google_command, handle_wiki_command
+from services.profile_service import handle_bio_command, handle_name_command, handle_photo_command
+from services.converter_service import handle_topdf_command, handle_tomp3_command
+from services.seen_service import handle_seen_command
 
 USE_AI = os.getenv("USE_AI", "True").lower() in ("true", "1", "yes")
 
@@ -294,6 +300,55 @@ async def dispatch_command(event) -> bool:
     # 6. Text-to-Speech (Matnni ovozga aylantirish)
     if cmd_lower.startswith(".voice"):
         await handle_voice_command(event)
+        return True
+
+    # 7. QR-Kod va Stiker
+    if cmd_lower.startswith(".qr"):
+        await handle_qr_command(event)
+        return True
+
+    if cmd_lower.startswith(".sticker"):
+        await handle_sticker_command(event)
+        return True
+
+    if cmd_lower.startswith(".unsticker"):
+        await handle_unsticker_command(event)
+        return True
+
+    # 8. Qidiruv xizmatlari
+    if cmd_lower.startswith(".google"):
+        await handle_google_command(event)
+        return True
+
+    if cmd_lower.startswith(".wiki"):
+        await handle_wiki_command(event)
+        return True
+
+    # 9. Profil boshqaruvi
+    if cmd_lower.startswith(".bio"):
+        await handle_bio_command(event)
+        return True
+
+    if cmd_lower.startswith(".name"):
+        await handle_name_command(event)
+        return True
+
+    if cmd_lower.startswith(".photo"):
+        await handle_photo_command(event)
+        return True
+
+    # 10. Fayl konvertori
+    if cmd_lower.startswith(".topdf"):
+        await handle_topdf_command(event)
+        return True
+
+    if cmd_lower.startswith(".tomp3"):
+        await handle_tomp3_command(event)
+        return True
+
+    # 11. Kuzatuv
+    if cmd_lower.startswith(".seen"):
+        await handle_seen_command(event)
         return True
 
     return False

@@ -82,7 +82,35 @@ Dastur **Telethon** asinxron kutubxonasi, Google'ning eng so'nggi **Gemini Multi
 
 ---
 
-### 11. 🌐 Boshqa Foydali Buyruqlar
+### 11. 🔗 QR-Kod va Stiker Xizmati
+- **`.qr <matn/havola>`** — Istalgan matn yoki havolani yozib QR-kod rasm yaratadi.
+- **`.qr`** — Rasmga reply qilganda (Gemini AI yordamida) rasmdagi QR-kodni o'qib beradi.
+- **`.sticker`** — Rasmga reply qilib uni darhol sifatli Telegram stiker formatiga aylantiradi.
+- **`.unsticker`** — Stikerga reply qilib uni oddiy rasmga o'girib beradi.
+
+---
+
+### 12. 🔍 Google va Wikipedia Qidiruv
+- **`.google <so'rov>`** — DuckDuckGo orqali tezkor qidiruv, natija yo'q bo'lsa AI orqali.
+- **`.wiki <so'rov>`** — Wikipedia'dan kerakli ma'lumotni to'g'ridan-to'g'ri o'qish (o'zbek va ingliz).
+
+---
+
+### 13. 👤 Profil va Xavfsizlik
+- **`.bio <matn>`** — Profil tarjimayi holini tezda o'zgartirish.
+- **`.name <ism>`** — Telegram ismingizni darhol yangilash.
+- **`.photo`** — Rasmga reply qilib uni darhol profilingiz rasmi qilib qo'yish.
+- **`.seen <ID>`** — Foydalanuvchining oxirgi marotaba qachon onlayn bo'lganini bilish.
+
+---
+
+### 14. 📂 Fayl va Media Konvertori
+- **`.topdf`** — Rasmga reply qilib uni PDF hujjatga aylantirish.
+- **`.tomp3`** — Videoga reply qilib undan faqat audioni (MP3) ajratib olish.
+
+---
+
+### 15. 🌐 Boshqa Foydali Buyruqlar
 - **`.tr <matn>`** — Har qanday tildagi xabarni o'zbek yoki ko'rsatilgan tilga tarjima qilish.
 - **`.ai <savol>`** — Gemini AI ga xohlagan chatdan turib to'g'ridan-to'g'ri savol berish.
 - **`.calc <ifoda>`** — Xavfsiz AST kalkulyatori (`.calc 25 * 4 + 180 / 3`).
@@ -116,6 +144,12 @@ Dastur **Telethon** asinxron kutubxonasi, Google'ning eng so'nggi **Gemini Multi
 | `.remind <vaqt> <matn>` | Aqlli eslatma o'rnatish (`.remind 10m dars`) |
 | `.reminders` | Kutilayotgan faol eslatmalar ro'yxati |
 | `.delremind <ID>` | Belgilangan eslatmani o'chirish |
+| `.qr <matn>` / `.qr` | QR kod yaratish yoki o'qish |
+| `.sticker` / `.unsticker` | Stikerga va rasmga aylantirish |
+| `.google` / `.wiki` | Google yoki Wikipedia dan ma'lumot qidirish |
+| `.bio` / `.name` / `.photo` | Profil tarjimayi holi, ismi va rasmini yangilash |
+| `.topdf` / `.tomp3` | Rasm -> PDF, Video -> MP3 konvertatsiya |
+| `.seen <user>` | Foydalanuvchi online statusini tekshirish |
 | `.tr [til]` | Xabarni tarjima qilish |
 | `.ai <savol>` | Gemini AI ga tezkor savol berish |
 | `.calc <ifoda>` | Matematik ifodalarni hisoblash |
@@ -181,3 +215,10 @@ Chiqarilgan qatorni `.env` faylidagi `TELETHON_SESSION=` qatoriga yoki Railway m
 ## 🔒 Xavfsizlik va Maxfiylik
 - `.env` fayli va `.session` ma'lumotlari `.gitignore` ga kiritilgan bo'lib, ular hech qachon GitHub repozitoriyasiga chiqmaydi.
 - Ma'lumotlar bazasi (`messages.db`) va kesh fayllari faqat sizning mahalliy tizimingizda xavfsiz saqlanadi.
+
+---
+
+## 👤 Muallif
+**Suxrob Sadullayev**
+- GitHub: [@SuxrobSadullayev](https://github.com/SuxrobSadullayev)
+- Loyiha bilan bog'liq taklif yoki muammolar bo'yicha Issues bo'limida qoldiring.
