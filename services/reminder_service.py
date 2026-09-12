@@ -6,30 +6,9 @@ import sqlite3
 from datetime import datetime, timedelta
 from telethon import TelegramClient
 from ai_helper import call_gemini
+from db import DB_FILE
 
 logger = logging.getLogger(__name__)
-
-DB_FILE = "messages.db"
-
-def init_reminders_db():
-    """Eslatmalar uchun SQLite jadvalini yaratadi."""
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS reminders (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    chat_id INTEGER,
-                    reminder_text TEXT,
-                    target_time TEXT,
-                    created_at TEXT,
-                    is_sent INTEGER DEFAULT 0
-                )
-            """)
-            conn.commit()
-    except Exception as e:
-        logger.error(f"Reminders DB ni ishga tushirishda xatolik: {e}")
-
-init_reminders_db()
 
 def parse_time_with_regex(time_str: str) -> datetime | None:
     """Oddiy formatdagi vaqtlarni aniqlaydi (masalan: 10m, 2h, 30s, 15:30)."""
@@ -84,22 +63,21 @@ async def parse_natural_reminder(raw_text: str) -> tuple[datetime | None, str | 
             max_output_tokens=500
         )
         if resp:
-            clean = resp.replace("```json", "").replace("```", "").strip()
-            data = json.loads(clean)
-            target_str = data.get("target_time")
-            text = data.get("text")
-            if target_str and text:
-                target_dt = datetime.strptime(target_str, "%Y-%m-%d %H:%M:%S")
-                return target_dt, text
+            # Har qanday markdown yoki matn ichidan JSON blokini ishonchli ajratib olamiz
+            json_match = re.search(r"\{[\s\S]*\}", resp)
+            if json_match:
+                data = json.loads(json_match.group(0))
+                target_str = data.get("target_time")
+                text = data.get("text")
+                if target_str and text:
+                    target_dt = datetime.strptime(target_str, "%Y-%m-%d %H:%M:%S")
+                    return target_dt, text
     except Exception as e:
         logger.warning(f"Natural reminder parsingda xatolik: {e}")
 
     return None, None
 
-def add_reminder(chat_id: int, reminder_text: str, target_dt: datetime) -> int | None:
-    """Eslatmani bazaga qo'shadi."""
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    target_str = target_dt.strftime("%Y-%m-%d %H:%M:%S")
+def _sync_add_reminder(chat_id: int, reminder_text: str, target_str: str, now_str: str) -> int | None:
     try:
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
@@ -113,8 +91,13 @@ def add_reminder(chat_id: int, reminder_text: str, target_dt: datetime) -> int |
         logger.error(f"Eslatmani saqlashda xatolik: {e}")
         return None
 
-def get_pending_reminders():
-    """Muddati yetib kelgan barcha eslatmalarni oladi."""
+async def add_reminder(chat_id: int, reminder_text: str, target_dt: datetime) -> int | None:
+    """Eslatmani bazaga qo'shadi."""
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    target_str = target_dt.strftime("%Y-%m-%d %H:%M:%S")
+    return await asyncio.to_thread(_sync_add_reminder, chat_id, reminder_text, target_str, now_str)
+
+def _sync_get_pending_reminders():
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     try:
         with sqlite3.connect(DB_FILE) as conn:
@@ -129,8 +112,10 @@ def get_pending_reminders():
         logger.error(f"Eslatmalarni olishda xatolik: {e}")
         return []
 
-def mark_reminder_sent(reminder_id: int):
-    """Eslatmani yuborilgan deb belgilaydi."""
+async def get_pending_reminders():
+    return await asyncio.to_thread(_sync_get_pending_reminders)
+
+def _sync_mark_reminder_sent(reminder_id: int):
     try:
         with sqlite3.connect(DB_FILE) as conn:
             conn.execute("UPDATE reminders SET is_sent = 1 WHERE id = ?", (reminder_id,))
@@ -138,8 +123,10 @@ def mark_reminder_sent(reminder_id: int):
     except Exception as e:
         logger.error(f"Eslatma holatini yangilashda xatolik: {e}")
 
-def list_active_reminders(chat_id: int | None = None) -> list:
-    """Hali yuborilmagan faol eslatmalar ro'yxati."""
+async def mark_reminder_sent(reminder_id: int):
+    await asyncio.to_thread(_sync_mark_reminder_sent, reminder_id)
+
+def _sync_list_active_reminders(chat_id: int | None = None) -> list:
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     try:
         with sqlite3.connect(DB_FILE) as conn:
@@ -163,8 +150,10 @@ def list_active_reminders(chat_id: int | None = None) -> list:
         logger.error(f"Faol eslatmalarni olishda xatolik: {e}")
         return []
 
-def delete_reminder(reminder_id: int) -> bool:
-    """Eslatmani o'chiradi."""
+async def list_active_reminders(chat_id: int | None = None) -> list:
+    return await asyncio.to_thread(_sync_list_active_reminders, chat_id)
+
+def _sync_delete_reminder(reminder_id: int) -> bool:
     try:
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
@@ -174,6 +163,9 @@ def delete_reminder(reminder_id: int) -> bool:
     except Exception as e:
         logger.error(f"Eslatmani o'chirishda xatolik: {e}")
         return False
+
+async def delete_reminder(reminder_id: int) -> bool:
+    return await asyncio.to_thread(_sync_delete_reminder, reminder_id)
 
 async def handle_remind_command(event):
     """
@@ -185,7 +177,6 @@ async def handle_remind_command(event):
     .remind ertaga soat 10 da hisobot tayyorlash
     """
     raw = (event.raw_text or "").strip()
-    # .remind so'zidan keyingi qismni ajratib olamiz
     content = re.sub(r"^\.remind\s*", "", raw, flags=re.IGNORECASE).strip()
 
     if not content:
@@ -229,7 +220,7 @@ async def handle_remind_command(event):
             await event.reply(msg)
         return
 
-    rem_id = add_reminder(event.chat_id, rem_text, target_dt)
+    rem_id = await add_reminder(event.chat_id, rem_text, target_dt)
     time_display = target_dt.strftime("%Y-%m-%d %H:%M:%S")
 
     success_text = (
@@ -245,7 +236,7 @@ async def handle_remind_command(event):
 
 async def handle_reminders_list_command(event):
     """Faol eslatmalar ro'yxatini ko'rsatish (.reminders)."""
-    rows = list_active_reminders()
+    rows = await list_active_reminders()
     if not rows:
         text = "📭 Hozirda faol eslatmalar mavjud emas."
     else:
@@ -267,7 +258,7 @@ async def handle_delremind_command(event):
         msg = "⚠️ Eslatma ID raqamini kiriting. Masalan: `.delremind 3`"
     else:
         rem_id = int(match.group(1))
-        if delete_reminder(rem_id):
+        if await delete_reminder(rem_id):
             msg = f"✅ Eslatma `#{rem_id}` muvaffaqiyatli o'chirildi."
         else:
             msg = f"❌ `#{rem_id}` raqamli eslatma topilmadi."
@@ -282,7 +273,7 @@ async def reminder_worker_loop(client: TelegramClient):
     logger.info("Eslatmalar fon xizmati (Reminder Worker) ishga tushdi.")
     while True:
         try:
-            due_reminders = get_pending_reminders()
+            due_reminders = await get_pending_reminders()
             for rem in due_reminders:
                 rem_id, chat_id, text, target_time = rem
                 alert_text = (
@@ -302,7 +293,7 @@ async def reminder_worker_loop(client: TelegramClient):
                 except Exception as send_err:
                     logger.error(f"Eslatmani yuborishda xatolik: {send_err}")
                 finally:
-                    mark_reminder_sent(rem_id)
+                    await mark_reminder_sent(rem_id)
         except Exception as e:
             logger.error(f"Reminder worker loop xatosi: {e}")
 

@@ -46,8 +46,15 @@ async def call_gemini(
     if not client:
         return None
 
-    configured_model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash").strip()
-    candidate_models = [configured_model, "gemini-3.5-flash", "gemini-3.5-flash-lite"]
+    configured_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
+    candidate_models = [
+        configured_model,
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+        "gemini-1.5-flash",
+        "gemini-3.5-flash"
+    ]
     # Dublikatlarni tartibni saqlagan holda olib tashlaymiz
     models_to_try = []
     for m in candidate_models:
@@ -81,19 +88,34 @@ async def call_gemini(
     logger.error("Barcha Gemini modellari so'rovni bajara olmadi.")
     return None
 
-async def generate_ai_reply(sender_name: str, message_text: str, is_first_time: bool = False) -> str | None:
-    """Kelgan xabarga Gemini AI orqali aqlli javob matni tayyorlaydi."""
+async def generate_ai_reply(
+    sender_name: str,
+    message_text: str = "",
+    is_first_time: bool = False,
+    audio_bytes: bytes | None = None,
+    audio_mime: str = "audio/ogg"
+) -> str | None:
+    """Kelgan xabarga (matn yoki audio) Gemini AI orqali aqlli javob matni tayyorlaydi."""
     use_ai = os.getenv("USE_AI", "True").lower() in ("true", "1", "yes")
     if not use_ai:
         return None
 
     system_instruction = os.getenv("AI_SYSTEM_INSTRUCTION", DEFAULT_SYSTEM_INSTRUCTION)
-    clean_text = message_text.strip() if message_text else "(Suhbatdosh stiker, rasm yoki emotsiya yubordi)"
+    clean_text = message_text.strip() if message_text else ""
+
+    contents_list = []
+    if audio_bytes and len(audio_bytes) > 0:
+        contents_list.append(types.Part.from_bytes(data=audio_bytes, mime_type=audio_mime))
+        instruction_note = "Suhbatdosh yuqoridagi audio/ovozli xabarni yubordi. Ushbu audio xabarni tinglab, unga mos javob qaytaring."
+    else:
+        if not clean_text:
+            clean_text = "(Suhbatdosh stiker, rasm yoki emotsiya yubordi)"
+        instruction_note = f"Suhbatdosh yuborgan xabar:\n\"\"\"\n{clean_text}\n\"\"\""
 
     if is_first_time:
         prompt = (
             f"Suhbatdosh ismi: {sender_name}\n"
-            f"Suhbatdosh yuborgan birinchi xabar:\n\"\"\"\n{clean_text}\n\"\"\"\n\n"
+            f"{instruction_note}\n\n"
             f"MUHIM VAZIFA: Ushbu inson sizga birinchi marta xabar yozmoqda. "
             f"Unga samimiy salom bering, foydalanuvchi hozirda offline (tarmoqda yo'q) ekanligini, "
             f"bo'sh vaqti bo'lishi bilan barcha xabarlariga albatta javob qaytarishini xushmuomala tushuntiring. "
@@ -102,11 +124,12 @@ async def generate_ai_reply(sender_name: str, message_text: str, is_first_time: 
     else:
         prompt = (
             f"Suhbatdosh ismi: {sender_name}\n"
-            f"Suhbatdosh yuborgan xabar:\n\"\"\"\n{clean_text}\n\"\"\"\n\n"
-            f"Iltimos, ushbu xabarga mos, chiroyli va qisqa javob qaytaring."
+            f"{instruction_note}\n\n"
+            f"Iltimos, ushbu xabarga mos, chiroyli, samimiy va qisqa javob qaytaring."
         )
 
-    ai_text = await call_gemini(contents=prompt, system_instruction=system_instruction)
+    contents_list.append(prompt)
+    ai_text = await call_gemini(contents=contents_list, system_instruction=system_instruction)
     if ai_text:
         return ai_text + get_ai_disclaimer()
 

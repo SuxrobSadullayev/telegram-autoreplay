@@ -1,5 +1,6 @@
 import os
 import time
+import asyncio
 import logging
 import sqlite3
 from datetime import datetime
@@ -11,46 +12,15 @@ from telethon.tl.types import (
     DocumentAttributeAudio,
     DocumentAttributeVideo
 )
+from db import DB_FILE, BASE_DIR
 
 logger = logging.getLogger(__name__)
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB_FILE = os.path.join(BASE_DIR, "messages.db")
 MEDIA_CACHE_DIR = os.path.join(BASE_DIR, "media_cache")
 MAX_MEDIA_SIZE_BYTES = 25 * 1024 * 1024  # Maksimal 25 MB gacha bo'lgan fayllar keshlanadi
+MAX_CACHE_TOTAL_MB = 300                 # Jami kesh papkasi hajmi 300 MB dan oshmasligi kerak
 
 os.makedirs(MEDIA_CACHE_DIR, exist_ok=True)
-
-def init_anti_delete_db():
-    """Anti-Delete uchun SQLite bazasini ishga tushiradi va kerakli ustunlarni qo'shadi."""
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS saved_messages (
-                    msg_id INTEGER,
-                    chat_id INTEGER,
-                    sender_id INTEGER,
-                    sender_name TEXT,
-                    text TEXT,
-                    media_type TEXT,
-                    media_path TEXT,
-                    created_at TEXT,
-                    PRIMARY KEY (msg_id, chat_id)
-                )
-            """)
-            # Eskiroq bazalarga yangi ustunlarni xavfsiz qo'shish (migratsiya)
-            cursor = conn.cursor()
-            cursor.execute("PRAGMA table_info(saved_messages)")
-            columns = [col[1] for col in cursor.fetchall()]
-            if "media_type" not in columns:
-                conn.execute("ALTER TABLE saved_messages ADD COLUMN media_type TEXT")
-            if "media_path" not in columns:
-                conn.execute("ALTER TABLE saved_messages ADD COLUMN media_path TEXT")
-            conn.commit()
-    except Exception as e:
-        logger.error(f"Anti-Delete DB ni ishga tushirishda xatolik: {e}")
-
-init_anti_delete_db()
 
 def get_media_type_str(message) -> str | None:
     """Xabardagi media turini aniqlaydi."""
@@ -69,6 +39,19 @@ def get_media_type_str(message) -> str | None:
     if isinstance(message.media, MessageMediaDocument):
         return "Hujjat / Fayl (Document)"
     return "Media"
+
+def _sync_save_incoming_msg(msg_id: int, chat_id: int, sender_id: int, sender_name: str, text: str, media_type: str | None, media_path: str | None):
+    try:
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO saved_messages 
+                (msg_id, chat_id, sender_id, sender_name, text, media_type, media_path, created_at) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (msg_id, chat_id, sender_id, sender_name, text, media_type, media_path, now_str))
+            conn.commit()
+    except Exception as e:
+        logger.error(f"Anti-Delete xabarni DB ga saqlashda xatolik: {e}")
 
 async def save_incoming_event(client: TelegramClient, event):
     """
@@ -133,20 +116,16 @@ async def save_incoming_event(client: TelegramClient, event):
         if not text and not media_path:
             return
 
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with sqlite3.connect(DB_FILE) as conn:
-            conn.execute("""
-                INSERT OR REPLACE INTO saved_messages 
-                (msg_id, chat_id, sender_id, sender_name, text, media_type, media_path, created_at) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (event.id, event.chat_id, sender_id, sender_name, text, media_type, media_path, now_str))
-            conn.commit()
+        # Asinxron ravishda DB ga yozamiz
+        await asyncio.to_thread(
+            _sync_save_incoming_msg,
+            event.id, event.chat_id, sender_id, sender_name, text, media_type, media_path
+        )
 
     except Exception as e:
         logger.error(f"Anti-Delete xabarni saqlashda xatolik: {e}")
 
-def get_saved_message(msg_id: int):
-    """O'chirilgan xabarni bazadan qidiradi."""
+def _sync_get_saved_message(msg_id: int):
     try:
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
@@ -169,6 +148,14 @@ def get_saved_message(msg_id: int):
         logger.error(f"Xabarni DB dan olishda xatolik: {e}")
     return None
 
+def _sync_delete_saved_message(msg_id: int):
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("DELETE FROM saved_messages WHERE msg_id = ?", (msg_id,))
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"O'chirilgan xabarni DB dan tozalashda xatolik: {e}")
+
 async def handle_deleted_message_event(client: TelegramClient, event):
     """O'chirilgan xabarlarni tutib, Saqlangan xabarlar (Saved Messages) ga forward qiladi."""
     # Faqat shaxsiy yozishmalardagi o'chirilgan xabarlar ko'riladi: guruh va kanallar inkor qilinadi
@@ -179,7 +166,7 @@ async def handle_deleted_message_event(client: TelegramClient, event):
         return
 
     for msg_id in event.deleted_ids:
-        saved = get_saved_message(msg_id)
+        saved = await asyncio.to_thread(_sync_get_saved_message, msg_id)
         if not saved:
             continue
 
@@ -226,28 +213,50 @@ async def handle_deleted_message_event(client: TelegramClient, event):
                 logger.error(f"O'chirilgan matnni 'me' ga yuborishda xatolik: {e}")
 
         # Qayta ogohlantirmaslik uchun bazadan o'chirib tashlaymiz
-        try:
-            with sqlite3.connect(DB_FILE) as conn:
-                conn.execute("DELETE FROM saved_messages WHERE msg_id = ?", (msg_id,))
-                conn.commit()
-        except Exception as del_err:
-            logger.warning(f"O'chirilgan xabarni DB dan tozalashda xatolik: {del_err}")
+        await asyncio.to_thread(_sync_delete_saved_message, msg_id)
 
-def clean_old_media_cache(max_age_hours: int = 48):
-    """48 soatdan eski kesh fayllarni tozalab disk joyini tejaydi."""
+def clean_old_media_cache(max_age_hours: int = 12, max_total_mb: int = MAX_CACHE_TOTAL_MB):
+    """
+    Kesh fayllarini tozalash (Vaqt va hajm kvotasi bo'yicha LRU tozalash):
+    1. Belgilangan soatdan eski fayllar o'chiriladi.
+    2. Agar jami kesh hajmi max_total_mb dan oshsa, eng eski fayllar birma-bir o'chiriladi.
+    """
     try:
-        now = time.time()
-        cutoff = now - (max_age_hours * 3600)
         if not os.path.exists(MEDIA_CACHE_DIR):
             return
+
+        now = time.time()
+        cutoff = now - (max_age_hours * 3600)
+        files = []
 
         for fname in os.listdir(MEDIA_CACHE_DIR):
             fpath = os.path.join(MEDIA_CACHE_DIR, fname)
             if os.path.isfile(fpath):
-                if os.path.getmtime(fpath) < cutoff:
-                    try:
+                try:
+                    stat = os.stat(fpath)
+                    # Agar muddati o'tgan bo'lsa darhol o'chiramiz
+                    if stat.st_mtime < cutoff:
                         os.remove(fpath)
-                    except Exception:
-                        pass
+                        continue
+                    files.append((fpath, stat.st_size, stat.st_mtime))
+                except Exception:
+                    pass
+
+        # Hajm bo'yicha LRU tozalash
+        total_bytes = sum(f[1] for f in files)
+        max_bytes = max_total_mb * 1024 * 1024
+
+        if total_bytes > max_bytes:
+            # Eng eski o'zgartirilgan fayllar bo'yicha saralaymiz
+            files.sort(key=lambda x: x[2])
+            for fpath, fsize, _ in files:
+                try:
+                    os.remove(fpath)
+                    total_bytes -= fsize
+                    if total_bytes <= max_bytes:
+                        break
+                except Exception:
+                    pass
+
     except Exception as e:
         logger.error(f"Keshni tozalashda xatolik: {e}")

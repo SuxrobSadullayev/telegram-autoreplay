@@ -7,14 +7,15 @@ import platform
 import logging
 import sqlite3
 import operator
+import asyncio
 from datetime import datetime
 from telethon import TelegramClient
 from ai_helper import call_gemini
+from db import DB_FILE
 
 logger = logging.getLogger(__name__)
 
 START_TIME = time.time()
-DB_FILE = "messages.db"
 
 # AST-based xavfsiz matematik hisoblagich
 SAFE_OPERATORS = {
@@ -236,17 +237,20 @@ async def handle_info_command(event, bot_paused: bool):
     uptime_str = f"{hours}s {minutes}m {seconds}soniya"
 
     # Ma'lumotlar bazasi statistikasi
-    db_saved_count = 0
-    reminders_count = 0
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM saved_messages")
-            db_saved_count = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM reminders WHERE is_sent = 0")
-            reminders_count = c.fetchone()[0]
-    except Exception:
-        pass
+    def _get_db_stats():
+        saved_cnt, rem_cnt = 0, 0
+        try:
+            with sqlite3.connect(DB_FILE) as conn:
+                c = conn.cursor()
+                c.execute("SELECT COUNT(*) FROM saved_messages")
+                saved_cnt = c.fetchone()[0]
+                c.execute("SELECT COUNT(*) FROM reminders WHERE is_sent = 0")
+                rem_cnt = c.fetchone()[0]
+        except Exception:
+            pass
+        return saved_cnt, rem_cnt
+
+    db_saved_count, reminders_count = await asyncio.to_thread(_get_db_stats)
 
     me = await event.client.get_me()
     model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")

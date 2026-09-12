@@ -1,5 +1,4 @@
 import os
-import json
 import time
 import asyncio
 import logging
@@ -20,6 +19,13 @@ from telethon import TelegramClient, events
 from telethon.tl.types import User
 from telethon.sessions import StringSession
 
+from db import (
+    db_load_known_users,
+    db_save_known_user,
+    db_load_replied_users,
+    db_save_replied_user,
+    db_clean_expired_replied_users
+)
 from ai_helper import generate_ai_reply
 from services.voice_service import handle_text_command, transcribe_message
 from services.anti_delete_service import (
@@ -65,33 +71,17 @@ COOLDOWN_MINUTES = int(os.getenv("COOLDOWN_MINUTES", "0"))
 REPLY_ONLY_NON_CONTACTS = os.getenv("REPLY_ONLY_NON_CONTACTS", "False").lower() in ("true", "1", "yes")
 REPLY_GROUP_MENTIONS = os.getenv("REPLY_GROUP_MENTIONS", "False").lower() in ("true", "1", "yes")
 
-CACHE_FILE = os.path.join(os.path.dirname(__file__), "replied_users.json")
-KNOWN_USERS_FILE = os.path.join(os.path.dirname(__file__), "known_users.json")
 SESSION_NAME = os.path.join(os.path.dirname(__file__), "autoreply_session")
 
 # ==========================================
-# 1. Birinchi marta yozganlarni aniqlash
+# 1. Tezkor Xotira Keshlari (In-Memory Caches)
 # ==========================================
-def load_known_users() -> set:
-    if os.path.exists(KNOWN_USERS_FILE):
-        try:
-            with open(KNOWN_USERS_FILE, "r", encoding="utf-8") as f:
-                return set(json.load(f))
-        except Exception as e:
-            logger.warning(f"known_users.json ni o'qishda xatolik: {e}")
-    return set()
-
-def save_known_users(users: set):
-    try:
-        with open(KNOWN_USERS_FILE, "w", encoding="utf-8") as f:
-            json.dump(list(users), f)
-    except Exception as e:
-        logger.error(f"known_users.json ni saqlashda xatolik: {e}")
-
-known_users = load_known_users()
+known_users: set = set()
+replied_users: dict[str, float] = {}
+last_outgoing_per_chat: dict[int, float] = {}
 
 async def check_is_first_time(chat_id: int, user_id: int) -> bool:
-    """Foydalanuvchi birinchi marta yozayotganini tekshiradi."""
+    """Foydalanuvchi birinchi marta yozayotganini aniqlaydi (ortiqcha tarmoq so'rovlarisiz)."""
     uid_str = str(user_id)
     if uid_str in known_users:
         return False
@@ -102,41 +92,26 @@ async def check_is_first_time(chat_id: int, user_id: int) -> bool:
         if len(messages) <= 1:
             is_first = True
     except Exception as e:
-        logger.warning(f"Chat tarixini olishda xatolik: {e}")
+        logger.warning(f"Chat tarixini olishda ogohlantirish: {e}")
+        is_first = True
 
     known_users.add(uid_str)
-    save_known_users(known_users)
+    asyncio.create_task(db_save_known_user(uid_str))
     return is_first
 
 # ==========================================
 # 2. Cooldown va Kesh boshqaruvi
 # ==========================================
-def load_cache() -> dict:
-    if os.path.exists(CACHE_FILE):
-        try:
-            with open(CACHE_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            logger.warning(f"Kesh faylini o'qishda xatolik: {e}")
-    return {}
-
-def save_cache(cache: dict):
-    try:
-        with open(CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(cache, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        logger.error(f"Keshni saqlashda xatolik: {e}")
-
-replied_users = load_cache()
-
 def clean_expired_cache():
+    if COOLDOWN_MINUTES <= 0:
+        return
     now = time.time()
     cutoff = now - (COOLDOWN_MINUTES * 60)
     keys_to_delete = [uid for uid, timestamp in replied_users.items() if timestamp < cutoff]
     for uid in keys_to_delete:
         del replied_users[uid]
     if keys_to_delete:
-        save_cache(replied_users)
+        asyncio.create_task(db_clean_expired_replied_users(cutoff))
 
 def should_reply(user_id: int) -> bool:
     if COOLDOWN_MINUTES <= 0:
@@ -148,8 +123,10 @@ def should_reply(user_id: int) -> bool:
     return (time.time() - last_time) >= (COOLDOWN_MINUTES * 60)
 
 def record_reply(user_id: int):
-    replied_users[str(user_id)] = time.time()
-    save_cache(replied_users)
+    now = time.time()
+    uid_str = str(user_id)
+    replied_users[uid_str] = now
+    asyncio.create_task(db_save_replied_user(uid_str, now))
 
 # ==========================================
 # 3. Validatsiya va TelegramClient
@@ -266,6 +243,9 @@ async def dispatch_command(event) -> bool:
 # ==========================================
 @client.on(events.NewMessage(outgoing=True))
 async def outgoing_handler(event):
+    # O'zimiz xabar yozgan vaqtni xotirada qayd qilamiz (jonli suhbatni tekshirish uchun)
+    last_outgoing_per_chat[event.chat_id] = time.time()
+
     # Buyruq bo'lsa uni bajaramiz
     handled = await dispatch_command(event)
     if handled:
@@ -322,13 +302,6 @@ async def auto_reply_handler(event):
     incoming_text = event.raw_text or ""
     sender_name = sender.first_name or "Foydalanuvchi"
 
-    # Agar xabar ovozli bo'lsa va matni bo'lmasa, ovozni transkripsiya qilib AI ga uzatamiz
-    if not incoming_text and (getattr(event.message, "voice", False) or getattr(event.message, "audio", False)):
-        logger.info(f"Ovozli xabar olindi ({sender_name}), transkripsiya qilinmoqda...")
-        voice_text = await transcribe_message(client, event.message)
-        if voice_text:
-            incoming_text = f"[Suhbatdosh ovozli xabar yubordi: \"{voice_text}\"]"
-
     # Kontaktda mavjud bo'lganlarni inkor qilish tekshiruvi
     if REPLY_ONLY_NON_CONTACTS and sender.contact:
         logger.info(f"Foydalanuvchi {sender_name} ({sender.id}) kontaktlarda mavjud, javob o'tkazib yuborildi.")
@@ -339,15 +312,24 @@ async def auto_reply_handler(event):
         logger.info(f"Foydalanuvchi {sender_name} ({sender.id}) yaqinda javob olgan (cooldown faol).")
         return
 
+    incoming_time = time.time()
+
     # Qisqa tanaffus (jonli suhbatni tekshirish uchun)
     if REPLY_DELAY_SECONDS > 0:
         await asyncio.sleep(REPLY_DELAY_SECONDS)
+        # 1. Avval xotiradagi o'zimizning so'nggi xabarimizni tekshiramiz (0 ta Telegram MTProto so'rovi)
+        if last_outgoing_per_chat.get(event.chat_id, 0) >= incoming_time:
+            logger.info(f"Siz {sender_name} ga o'zingiz javob yozdingiz (xotiradan aniqlandi), AI to'xtatildi.")
+            return
 
-    # Tanaffusdan so'ng tekshiramiz: balki o'zingiz javob yozgandirsiz?
-    recent_msgs = await client.get_messages(event.chat_id, limit=2)
-    if any(m.out for m in recent_msgs):
-        logger.info(f"Siz {sender_name} ga o'zingiz javob yozdingiz, AI to'xtatildi.")
-        return
+        # 2. Telegramdan tekshirish
+        try:
+            recent_msgs = await client.get_messages(event.chat_id, limit=2)
+            if any(m.out for m in recent_msgs):
+                logger.info(f"Siz {sender_name} ga o'zingiz javob yozdingiz, AI to'xtatildi.")
+                return
+        except Exception as e:
+            logger.warning(f"Xabarlar tarixini tekshirishda xatolik: {e}")
 
     # Birinchi marta yozayotganini tekshiramiz
     is_first_time = await check_is_first_time(event.chat_id, sender.id)
@@ -356,10 +338,27 @@ async def auto_reply_handler(event):
 
     logger.info(f"Yangi xabar olindi: {sender_name} (ID: {sender.id}) -> '{incoming_text[:50]}'")
 
+    # Audio/ovozli xabar bo'lsa
+    audio_bytes = None
+    audio_mime = "audio/ogg"
+    if not incoming_text and (getattr(event.message, "voice", False) or getattr(event.message, "audio", False)):
+        try:
+            if hasattr(event.message.media, "document") and event.message.media.document:
+                audio_mime = getattr(event.message.media.document, "mime_type", "audio/ogg")
+            audio_bytes = await client.download_media(event.message, file=bytes)
+        except Exception as e:
+            logger.warning(f"Ovozli xabarni yuklab olishda ogohlantirish: {e}")
+
     reply_text = None
     if USE_AI:
         logger.info(f"Gemini AI orqali aqlli javob tayyorlanmoqda (Birinchi marta: {is_first_time})...")
-        reply_text = await generate_ai_reply(sender_name, incoming_text, is_first_time=is_first_time)
+        reply_text = await generate_ai_reply(
+            sender_name=sender_name,
+            message_text=incoming_text,
+            is_first_time=is_first_time,
+            audio_bytes=audio_bytes,
+            audio_mime=audio_mime
+        )
 
     # Agar AI ishlamasa yoki o'chiq bo'lsa zaxira andozadan foydalanamiz
     if not reply_text:
@@ -380,26 +379,32 @@ async def auto_reply_handler(event):
 # 8. Vaqti-vaqti bilan eski keshni tozalash
 # ==========================================
 async def periodic_cache_cleaner():
+    """Har 30 daqiqada keshni avtomatik tozalab turadi."""
     while True:
         try:
-            clean_old_media_cache(max_age_hours=48)
+            await asyncio.to_thread(clean_old_media_cache, 12, 300)
         except Exception as e:
             logger.error(f"Kesh tozalash davriy xatosi: {e}")
-        await asyncio.sleep(3600 * 12) # Har 12 soatda bir marta
+        await asyncio.sleep(1800)  # Har 30 daqiqada bir marta
 
 # ==========================================
 # 9. Asosiy ishga tushirish (Main)
 # ==========================================
 async def main():
+    global known_users, replied_users
+    # Kesh ma'lumotlarini SQLite bazasidan xotiraga yuklaymiz
+    known_users = await db_load_known_users()
+    replied_users = await db_load_replied_users()
+
     await client.start()
     me = await client.get_me()
     logger.info("=" * 60)
     logger.info("🚀 Telegram AI Userbot muvaffaqiyatli ishga tushdi!")
     logger.info(f"👤 Egasining akkaunti: {me.first_name} (@{me.username or 'yoq'}) [ID: {me.id}]")
     logger.info(f"🤖 AI rejimi: {'YOQILGAN (Google Gemini AI)' if USE_AI else 'OCHIRILGAN'}")
-    logger.info("🛡 Anti-Delete tizimi: FAOL (Matn va Media keshlanadi)")
-    logger.info("⏰ Aqlli eslatmalar (Reminders) tizimi: FAOL")
-    logger.info("🎙 Voice-to-Text tizimi: FAOL (.text buyrug'i)")
+    logger.info("🛡 Anti-Delete tizimi: FAOL (LRU va hajmiy kvota himoyasi bilan)")
+    logger.info("⏰ Aqlli eslatmalar (Reminders) tizimi: FAOL (Asinxron SQLite)")
+    logger.info("🎙 Voice-to-Text tizimi: FAOL (.text buyrug'i va multimodal javob)")
     logger.info("📝 Chat Xulosalash tizimi: FAOL (.summary buyrug'i)")
     logger.info("=" * 60)
     logger.info("Barcha xabarlar va buyruqlar tinglanmoqda...")
