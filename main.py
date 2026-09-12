@@ -27,11 +27,8 @@ USE_AI = os.getenv("USE_AI", "True").lower() in ("true", "1", "yes")
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 
-# Jonli muloqot sozlamalari (Foydalanuvchiga xalaqit bermaslik uchun)
-ACTIVE_CHAT_MINUTES = int(os.getenv("ACTIVE_CHAT_MINUTES", "15"))
-ACTIVE_CHAT_TIMEOUT = ACTIVE_CHAT_MINUTES * 60  # soniyalarda
-REPLY_DELAY_SECONDS = int(os.getenv("REPLY_DELAY_SECONDS", "5")) # AI javob berishdan oldin kutadigan vaqt
-active_chats = {} # chat_id -> oxirgi yozgan vaqtimiz
+# Boshqaruv sozlamalari
+REPLY_DELAY_SECONDS = int(os.getenv("REPLY_DELAY_SECONDS", "2")) # AI javob berishdan oldin kutadigan qisqa vaqt (soniya)
 BOT_PAUSED = False
 
 # Standart xabarlar
@@ -263,10 +260,6 @@ async def outgoing_handler(event):
             await event.reply("▶️ **AI Avto-javob qayta yoqildi!**")
             return
 
-    # Agar boshqa bir insonga o'zingiz xabar yozsangiz:
-    active_chats[event.chat_id] = time.time()
-    logger.info(f"Siz {event.chat_id} bilan o'zingiz yozishmoqdasiz. AI bu chatda {ACTIVE_CHAT_MINUTES} daqiqa xalaqit bermaydi.")
-
 # ==========================================
 # 7. Yangi xabarlarga avto-javob
 # ==========================================
@@ -311,12 +304,6 @@ async def auto_reply_handler(event):
     # Xabarni ma'lumotlar bazasiga saqlaymiz (Anti-Delete uchun)
     save_incoming_message(event.id, event.chat_id, sender.id, sender_name, incoming_text)
 
-    # Jonli muloqot tekshiruvi: Agar siz bu suhbatdoshga oxirgi vaqtda o'zingiz yozgan bo'lsangiz:
-    last_my_msg = active_chats.get(event.chat_id, 0)
-    if (time.time() - last_my_msg) < ACTIVE_CHAT_TIMEOUT:
-        logger.info(f"Siz {sender_name} bilan o'zingiz jonli yozishmoqdasiz. AI aralashmaydi.")
-        return
-
     # Kontaktda mavjud bo'lganlarni inkor qilish tekshiruvi (agar sozlamada yoqilgan bo'lsa)
     if REPLY_ONLY_NON_CONTACTS and sender.contact:
         logger.info(f"Foydalanuvchi {sender_name} ({sender.id}) kontaktlarda mavjud, javob o'tkazib yuborildi.")
@@ -335,7 +322,6 @@ async def auto_reply_handler(event):
     recent_msgs = await client.get_messages(event.chat_id, limit=2)
     if any(m.out for m in recent_msgs):
         logger.info(f"Siz {sender_name} ga o'zingiz javob yozdingiz, AI to'xtatildi.")
-        active_chats[event.chat_id] = time.time()
         return
 
     # Birinchi marta yozayotganini tekshiramiz
