@@ -1,13 +1,13 @@
 import os
 import logging
+from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
-logger = logging.getLogger(__name__)
+# Har ehtimolga qarshi .env ni yuklaymiz
+load_dotenv()
 
-USE_AI = os.getenv("USE_AI", "True").lower() in ("true", "1", "yes")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+logger = logging.getLogger(__name__)
 
 DEFAULT_SYSTEM_INSTRUCTION = (
     "Siz foydalanuvchining shaxsiy sun'iy intellekt yordamchisisiz. "
@@ -17,25 +17,26 @@ DEFAULT_SYSTEM_INSTRUCTION = (
     "jonli insondek tabiiy tilda yozing."
 )
 
-SYSTEM_INSTRUCTION = os.getenv("AI_SYSTEM_INSTRUCTION", DEFAULT_SYSTEM_INSTRUCTION)
-
 _client = None
 
 def get_ai_client():
     global _client
-    if _client is None and GEMINI_API_KEY:
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if _client is None and api_key:
         try:
-            _client = genai.Client(api_key=GEMINI_API_KEY)
+            _client = genai.Client(api_key=api_key)
         except Exception as e:
             logger.error(f"Gemini klientini ishga tushirishda xatolik: {e}")
     return _client
 
 async def generate_ai_reply(sender_name: str, message_text: str) -> str | None:
     """Kelgan xabarga Gemini AI orqali aqlli javob matni tayyorlaydi."""
-    if not USE_AI:
+    use_ai = os.getenv("USE_AI", "True").lower() in ("true", "1", "yes")
+    if not use_ai:
         return None
 
-    if not GEMINI_API_KEY or GEMINI_API_KEY.strip() == "":
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
         logger.warning("USE_AI=True lekin GEMINI_API_KEY kiritilmagan. Oddiy matn yuboriladi.")
         return None
 
@@ -43,20 +44,25 @@ async def generate_ai_reply(sender_name: str, message_text: str) -> str | None:
     if not client:
         return None
 
+    model_name = os.getenv("GEMINI_MODEL", "gemini-3.6-flash").strip()
+    system_instruction = os.getenv("AI_SYSTEM_INSTRUCTION", DEFAULT_SYSTEM_INSTRUCTION)
+
+    clean_text = message_text.strip() if message_text else "(Suhbatdosh stiker, rasm yoki emotsiya yubordi)"
+
     prompt = (
         f"Suhbatdosh ismi: {sender_name}\n"
-        f"Suhbatdosh yuborgan xabar:\n\"\"\"\n{message_text}\n\"\"\"\n\n"
+        f"Suhbatdosh yuborgan xabar:\n\"\"\"\n{clean_text}\n\"\"\"\n\n"
         f"Iltimos, ushbu xabarga mos, chiroyli va qisqa javob qaytaring."
     )
 
     try:
         response = await client.aio.models.generate_content(
-            model=GEMINI_MODEL,
+            model=model_name,
             contents=prompt,
             config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_INSTRUCTION,
+                system_instruction=system_instruction,
                 temperature=0.7,
-                max_output_tokens=300,
+                max_output_tokens=1000,
                 automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
             )
         )

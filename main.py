@@ -2,11 +2,6 @@ import os
 import json
 import time
 import logging
-from dotenv import load_dotenv
-from telethon import TelegramClient, events
-from telethon.tl.types import User
-from ai_helper import generate_ai_reply, USE_AI
-
 # Logging sozlash
 logging.basicConfig(
     format="%(asctime)s - [%(levelname)s] - %(message)s",
@@ -14,8 +9,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Muhit o'zgaruvchilarini yuklash
+# Muhit o'zgaruvchilarini darhol yuklaymiz
 load_dotenv()
+
+from telethon import TelegramClient, events
+from telethon.tl.types import User
+from ai_helper import generate_ai_reply
+
+USE_AI = os.getenv("USE_AI", "True").lower() in ("true", "1", "yes")
 
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
