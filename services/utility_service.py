@@ -277,6 +277,8 @@ async def handle_info_command(event, bot_paused: bool):
 # ==========================================
 # 5. Yordam menyusi (.help)
 # ==========================================
+async def handle_help_command(event):
+    """Barcha buyruqlar va imkoniyatlar ro'yxatini ko'rsatadi."""
     help_text = (
         "📖 **Telegram AI Userbot — Barcha Imkoniyatlar Qo'llanmasi**\n\n"
         "🤖 **Avto-javob & Boshqaruv:**\n"
