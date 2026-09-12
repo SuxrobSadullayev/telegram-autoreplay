@@ -1,0 +1,21 @@
+# Maxfiy kalitlar va seanslar (HECH QACHON GITHUBGA CHIQMASIN)
+.env
+*.session
+*.session-journal
+
+# Virtual muhit
+venv/
+.venv/
+env/
+
+# Vaqtinchalik kesh va loglar
+*.log
+autoreply.log
+replied_users.json
+
+# Python fayllari
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
