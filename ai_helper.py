@@ -35,24 +35,59 @@ def get_ai_disclaimer() -> str:
         return ""
     return f"\n\n_{disc}_"
 
+async def call_gemini(
+    contents,
+    system_instruction: str | None = None,
+    max_output_tokens: int = 2048,
+    temperature: float = 0.7
+) -> str | None:
+    """Gemini AI ga so'rov yuborish, kvota yoki xatolik bo'lsa zaxira modellarga avtomatik o'tish."""
+    client = get_ai_client()
+    if not client:
+        return None
+
+    configured_model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash").strip()
+    candidate_models = [configured_model, "gemini-3.5-flash", "gemini-3.5-flash-lite"]
+    # Dublikatlarni tartibni saqlagan holda olib tashlaymiz
+    models_to_try = []
+    for m in candidate_models:
+        if m and m not in models_to_try:
+            models_to_try.append(m)
+
+    config_kwargs = {
+        "temperature": temperature,
+        "max_output_tokens": max_output_tokens,
+        "automatic_function_calling": types.AutomaticFunctionCallingConfig(disable=True)
+    }
+    if system_instruction:
+        config_kwargs["system_instruction"] = system_instruction
+
+    gen_config = types.GenerateContentConfig(**config_kwargs)
+
+    for model_name in models_to_try:
+        try:
+            response = await client.aio.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=gen_config
+            )
+            if response and response.text:
+                return response.text.strip()
+        except Exception as e:
+            err_str = str(e)
+            logger.warning(f"Model '{model_name}' xatosi: {err_str[:120]}. Keyingi model sinab ko'riladi...")
+            continue
+
+    logger.error("Barcha Gemini modellari so'rovni bajara olmadi.")
+    return None
+
 async def generate_ai_reply(sender_name: str, message_text: str, is_first_time: bool = False) -> str | None:
     """Kelgan xabarga Gemini AI orqali aqlli javob matni tayyorlaydi."""
     use_ai = os.getenv("USE_AI", "True").lower() in ("true", "1", "yes")
     if not use_ai:
         return None
 
-    api_key = os.getenv("GEMINI_API_KEY", "").strip()
-    if not api_key:
-        logger.warning("USE_AI=True lekin GEMINI_API_KEY kiritilmagan. Oddiy matn yuboriladi.")
-        return None
-
-    client = get_ai_client()
-    if not client:
-        return None
-
-    model_name = os.getenv("GEMINI_MODEL", "gemini-3.6-flash").strip()
     system_instruction = os.getenv("AI_SYSTEM_INSTRUCTION", DEFAULT_SYSTEM_INSTRUCTION)
-
     clean_text = message_text.strip() if message_text else "(Suhbatdosh stiker, rasm yoki emotsiya yubordi)"
 
     if is_first_time:
@@ -71,20 +106,8 @@ async def generate_ai_reply(sender_name: str, message_text: str, is_first_time: 
             f"Iltimos, ushbu xabarga mos, chiroyli va qisqa javob qaytaring."
         )
 
-    try:
-        response = await client.aio.models.generate_content(
-            model=model_name,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction,
-                temperature=0.7,
-                max_output_tokens=2048,
-                automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
-            )
-        )
-        if response and response.text:
-            return response.text.strip() + get_ai_disclaimer()
-    except Exception as e:
-        logger.error(f"Gemini AI javob yaratishda xatolik yuz berdi: {e}")
+    ai_text = await call_gemini(contents=prompt, system_instruction=system_instruction)
+    if ai_text:
+        return ai_text + get_ai_disclaimer()
 
     return None

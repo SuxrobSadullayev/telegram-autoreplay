@@ -13,6 +13,7 @@ env/
 autoreply.log
 replied_users.json
 known_users.json
+media_cache/
 *.db
 *.db-journal
 
