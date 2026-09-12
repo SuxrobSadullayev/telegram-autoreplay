@@ -47,6 +47,16 @@ from services.utility_service import (
     handle_info_command,
     handle_help_command
 )
+from services.vision_service import handle_see_command, handle_ocr_command
+from services.downloader_service import handle_download_command
+from services.text_editor_service import (
+    handle_fix_command,
+    handle_formal_command,
+    handle_informal_command
+)
+from services.purge_service import handle_del_command, handle_purge_command
+from services.weather_currency_service import handle_currency_command, handle_weather_command
+from services.tts_service import handle_voice_command
 
 USE_AI = os.getenv("USE_AI", "True").lower() in ("true", "1", "yes")
 
@@ -234,6 +244,56 @@ async def dispatch_command(event) -> bool:
 
     if cmd_lower.startswith(".calc"):
         await handle_calc_command(event)
+        return True
+
+    # 1. Vision AI: Rasm tahlili va OCR
+    if cmd_lower.startswith(".see"):
+        await handle_see_command(event)
+        return True
+
+    if cmd_lower.startswith(".ocr"):
+        await handle_ocr_command(event)
+        return True
+
+    # 2. Media yuklovchi (Instagram, TikTok, YouTube)
+    if cmd_lower.startswith((".dl", ".download", ".video")):
+        await handle_download_command(event)
+        return True
+
+    # 3. Matn tahrirchisi & Grammatika
+    if cmd_lower.startswith(".fix"):
+        await handle_fix_command(event)
+        return True
+
+    if cmd_lower.startswith(".formal"):
+        await handle_formal_command(event)
+        return True
+
+    if cmd_lower.startswith((".informal", ".shaxsiy")):
+        await handle_informal_command(event)
+        return True
+
+    # 4. Chatni tozalash
+    if cmd_lower == ".del":
+        await handle_del_command(event)
+        return True
+
+    if cmd_lower.startswith(".purge"):
+        await handle_purge_command(event)
+        return True
+
+    # 5. Valyuta kurslari va Ob-havo
+    if cmd_lower.startswith((".kurs", ".valyuta", ".cbu")):
+        await handle_currency_command(event)
+        return True
+
+    if cmd_lower.startswith((".weather", ".obhavo")):
+        await handle_weather_command(event)
+        return True
+
+    # 6. Text-to-Speech (Matnni ovozga aylantirish)
+    if cmd_lower.startswith(".voice"):
+        await handle_voice_command(event)
         return True
 
     return False

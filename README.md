@@ -2,7 +2,7 @@
 
 Ushbu loyiha shaxsiy Telegram akkauntingizni kuchli, aqlli va to'liq avtonom sun'iy intellekt assistentiga aylantiruvchi professional **Telegram Userbot** hisoblanadi.
 
-Dastur **Telethon** asinxron kutubxonasi va Google'ning eng so'nggi **Gemini AI (gemini-3.5-flash)** multimodal modeli asosida ishlaydi.
+Dastur **Telethon** asinxron kutubxonasi, Google'ning eng so'nggi **Gemini Multimodal AI** modellari hamda asinxron SQLite ma'lumotlar bazasi asosida ishlaydi.
 
 ---
 
@@ -10,35 +10,67 @@ Dastur **Telethon** asinxron kutubxonasi va Google'ning eng so'nggi **Gemini AI 
 
 ### 1. 🤖 Aqlli AI Avto-Javob (Google Gemini)
 - **Kontekstual tushunish:** Kelgan har qanday xabarning ma'nosini tushunib, egasi nomidan xushmuomala, lo'nda va tabiiy o'zbek tilida javob qaytaradi.
-- **Dinamik model zaxirasi (Fallback):** Agar asosiy modelda kvota tugasa yoki xatolik bo'lsa, avtomatik ravishda `gemini-3.5-flash-lite` va `gemini-3.6-flash` modellariga ulanadi. Bot hech qachon to'xtab qolmaydi!
+- **Dinamik model zaxirasi (Fallback):** Kvota tugasa yoki xatolik bo'lsa, avtomatik ravishda `gemini-2.5-flash`, `gemini-2.0-flash`, `gemini-2.0-flash-lite`, `gemini-1.5-flash` modellariga ulanadi. Bot hech qachon to'xtab qolmaydi!
 - **Birinchi marta yozganlarni aniqlash:** Birinchi marta yozgan suhbatdoshlarga samimiy salomlashish va hozirda egasi offline ekanligi haqida maxsus xabar beriladi.
-- **Jonli suhbat filtri:** Xabar kelganda bir necha soniya tanaffus qilib, agar egasi o'zi javob yozsa, AI aralashmaydi.
-- **Ovozli xabarlarni tushunish:** Suhbatdosh ovozli xabar (voice note) yuborsa, bot uni avtomatik tinglab, ovoz mazmuniga qarab matnli javob beradi!
+- **Jonli suhbat filtri:** Xabar kelganda bir oz tanaffus qilib, agar egasi o'zi javob yozsa, AI aralashmaydi (xotiradagi kesh orqali ortiqcha tarmoq so'rovisiz ishlaydi).
+- **Ovozli xabarlarni tushunish:** Suhbatdosh ovozli xabar (voice note) yuborsa, bot uni avtomatik tinglab, ovoz mazmuniga qarab to'g'ridan-to'g'ri javob beradi!
 
 ---
 
-### 2. 🎙 Ovozli Xabarlarni Matnga O'girish (Voice-to-Text)
-- **`.text`** yoki **`.transcribe`** — Biror ovozli xabar (voice note), audio fayl yoki dumaloq video xabarga javob (reply) qilib yozilganda, uni Google Gemini AI multimodal eshitish tizimi orqali to'liq va aniq matnga aylantirib beradi.
+### 2. 👁 Multimodal Rasm Tahlili (Vision AI — `.see` / `.ocr`)
+- **`.see <savol>`** — Biror rasm, skrinshot yoki diagrammaga javob (reply) qilib yozilganda, Gemini Vision orqali tasvirni tahlil qilib, savollarga javob beradi yoki undagi masalalarni yechib beradi.
+- **`.ocr`** — Rasm yoki hujjatdagi barcha matn va yozuvlarni bir zumda to'liq matn shaklida ajratib beradi.
 
 ---
 
-### 3. 🛡 Kengaytirilgan Media Anti-Delete (O'chirilgan xabarlarni tiklash)
+### 3. 📥 Instagram, TikTok va YouTube Yuklovchi (`.dl`)
+- **`.dl <havola>`** yoki havolali xabarga **reply `.dl`**:
+  - Instagram Reels, TikTok (suv belgisiz), YouTube Shorts va Twitter/X videolarini eng yuqori sifatda Telegramga video qilib yuklab beradi.
+  - Hech qanday tashqi reklama botlarisiz to'g'ridan-to'g'ri ishlaydi.
+
+---
+
+### 4. ✍️ Grammatika va Matn Tahrirchisi (`.fix` / `.formal` / `.informal`)
+- **`.fix`** — Xabarga reply qilinsa, undagi barcha imlo, grammatika va punktuatsiya xatolarini to'g'rilab beradi.
+- **`.formal`** — Oddiy tilda yozilgan matnni rasmiy ish yozishmasi (biznes muloqot) uslubiga aylantiradi.
+- **`.informal`** (yoki **`.shaxsiy`**) — Rasmiy yoki quruq matnni samimiy, do'stona suhbat uslubiga o'giradi.
+
+---
+
+### 5. 🧹 Chatni Tezkor Tozalash (`.purge` / `.del`)
+- **`.del`** — Reply qilingan xabarni va buyruq xabarini bir zumda o'chiradi.
+- **`.purge <soni>`** — Chatdagi o'zingiz yozgan so'nggi N ta xabarni tozalaydi (masalan: `.purge 20`).
+- Reply qilingan xabardan keyingi xabarlarni tozalash imkoniyati mavjud.
+
+---
+
+### 6. 💵 Valyuta Kurslari va Ob-havo (`.kurs` / `.weather`)
+- **`.kurs`** (yoki **`.valyuta`**) — O‘zbekiston Markaziy Banki (CBU) ning rasmiy bugungi Dollar, Yevro, Rubl kurslari va o'zgarish farqini ko'rsatadi.
+- **`.weather [shahar]`** (yoki **`.obhavo`**) — Toshkent yoki istalgan shahar bo'yicha jonli harorat, sezilishi, namlik va shamol ma'lumotlarini taqdim etadi.
+
+---
+
+### 7. 🗣 Ovozli Xabar Qilib Yuborish (Text-to-Speech — `.voice`)
+- **`.voice <matn>`** yoki matnga **reply `.voice`**:
+  - Yozilgan matnni inson ovozidagi Telegram audio xabari (Voice Note) ga aylantirib yuboradi.
+
+---
+
+### 8. 🛡 Kengaytirilgan Media Anti-Delete (O'chirilgan xabarlarni tiklash)
 - Suhbatdosh sizga yuborgan xabarini o'chirib yuborsa (faqat sizdan yoki ikkalangizdan ham), userbot uni darhol tutib oladi!
 - **Matnli xabarlar:** O'chirilgan xabar matni, yuboruvchi ismi, Telegram ID raqami va yuborilgan vaqti bilan **"Saqlangan xabarlar" (Saved Messages)**ingizga yuboriladi.
-- **Media xabarlar:** Rasmlar (photo), videolar (video), ovozli xabarlar (voice note), dumaloq videolar (video note) va hujjatlar oldindan keshga saqlanadi. Suhbatdosh o'chirgan zahoti o'sha fayl o'z holicha Saqlangan xabarlarga yetkaziladi.
+- **Media xabarlar:** Rasmlar, videolar, ovozli xabarlar, dumaloq videolar va hujjatlar avtomatik keshlanadi. Suhbatdosh o'chirsa, media o'z holicha Saqlangan xabarlarga yetkaziladi.
+- **LRU Kesh Himoyasi:** Disk to'lib qolmasligi uchun 300 MB hajmiy chegara va avtomatik davriy tozalash tizimi o'rnatilgan.
 
 ---
 
-### 4. 📝 Chat va Guruh Xulosasi (Chat Summarizer)
-- **`.summary`** — Guruh yoki shaxsiy chatdagi so'nggi 50 ta xabarni bir zumda o'qib, AI orqali quyidagi tartibda qisqa xulosa tayyorlaydi:
-  - 📌 **Asosiy mavzular:** Nimalar muhokama qilindi?
-  - 💡 **Muhim fikrlar va qarorlar:** Kim nimaga kelishdi?
-  - ✅ **Keyingi vazifalar:** Belgilangan ishlar.
-- **`.summary <soni>`** — Masalan `.summary 100` deb yozib, istalgan sondagi xabarlarni tahlil qilish mumkin.
+### 9. 📝 Chat va Guruh Xulosasi (Chat Summarizer)
+- **`.summary`** — Guruh yoki shaxsiy chatdagi so'nggi 50 ta xabarni bir zumda o'qib, AI orqali asosiy mavzular, muhim qarorlar va keyingi vazifalarni o'zbek tilida xulosa qilib beradi.
+- **`.summary <soni>`** — Masalan `.summary 100` deb istalgan sondagi xabarlarni tahlil qilish mumkin.
 
 ---
 
-### 5. ⏰ Aqlli Eslatmalar Tizimi (Smart Reminders)
+### 10. ⏰ Aqlli Eslatmalar Tizimi (Smart Reminders)
 - SQLite ma'lumotlar bazasida saqlanuvchi va orqa fonda asinxron ishlovchi eslatmalar tizimi:
   - `.remind 15m dori ichish` — 15 daqiqadan so'ng
   - `.remind 2h hisobot topshirish` — 2 soatdan so'ng
@@ -50,36 +82,41 @@ Dastur **Telethon** asinxron kutubxonasi va Google'ning eng so'nggi **Gemini AI 
 
 ---
 
-### 6. 🌐 AI Tarjimon (.tr / .translate)
-- Har qanday tildagi xabarga reply qilib `.tr` yozilsa, xabarni o'zbek tiliga chiroyli va mukammal tarjima qilib beradi.
-- Maqsadli tilni ko'rsatish: `.tr ingliz`, `.tr rus`, `.tr turk`
-- To'g'ridan-to'g'ri tarjima: `.tr How was your weekend?`
-
----
-
-### 7. 💡 Boshqa Foydali Buyruqlar
-- **`.ai <savol>`** — Gemini AI ga xohlagan chatdan turib to'g'ridan-to'g'ri savol berish va javob olish.
-- **`.calc <ifoda>`** — Xavfsiz kalkulyator (masalan: `.calc 25 * 4 + 180 / 3`, `.calc sqrt(144)`).
-- **`.info`** — Tizim ma'lumotlari: Uptime, OS, Python/Telethon versiyalari, saqlangan xabarlar va faol eslatmalar soni.
-- **`.stop`** / **`.start`** — AI avto-javobni vaqtincha to'xtatish va qayta yoqish (Saqlangan xabarlardan yoki istalgan chatdan).
+### 11. 🌐 Boshqa Foydali Buyruqlar
+- **`.tr <matn>`** — Har qanday tildagi xabarni o'zbek yoki ko'rsatilgan tilga tarjima qilish.
+- **`.ai <savol>`** — Gemini AI ga xohlagan chatdan turib to'g'ridan-to'g'ri savol berish.
+- **`.calc <ifoda>`** — Xavfsiz AST kalkulyatori (`.calc 25 * 4 + 180 / 3`).
+- **`.info`** — Tizim ma'lumotlari: Uptime, OS, AI modeli, baza statistikasi.
+- **`.stop`** / **`.start`** — AI avto-javobni vaqtincha to'xtatish va qayta yoqish.
 - **`.help`** — Barcha buyruqlar va imkoniyatlarning to'liq menyusi.
 
 ---
 
 ## 📋 Buyruqlar Jadvali
 
-| Buyruq | Izoh |
+| Buyruq | Qo'llanilishi / Vazifasi |
 | :--- | :--- |
-| `.help` | Barcha buyruqlar bo'yicha to'liq qo'llanma |
-| `.info` | Userbot va server holati (Uptime, RAM, DB statistika) |
+| `.help` | Barcha buyruqlar bo'yicha to'liq qo'llanma menyusi |
+| `.info` | Userbot tizim holati (Uptime, AI modeli, DB statistikasi) |
 | `.stop` / `.pause` | AI avto-javob tizimini vaqtincha to'xtatish |
 | `.start` / `.resume` | AI avto-javob tizimini qayta yoqish |
+| `.see <savol>` | Rasmga reply qilib rasm mazmunini tahlil qilish yoki masalani yechish |
+| `.ocr` | Rasmga reply qilib undagi barcha matnlarni ko'chirib olish |
+| `.dl [havola]` | Instagram, TikTok, YouTube Shorts videolarini yuklash |
+| `.fix` | Matnga reply qilib grammatik va imlo xatolarini tuzatish |
+| `.formal` | Matnga reply qilib rasmiy ish uslubiga o'girish |
+| `.informal` | Matnga reply qilib samimiy, do'stona uslubga o'girish |
+| `.del` | Javob berilgan xabarni va buyruqni bir zumda o'chirish |
+| `.purge [soni]` | Chatdagi so'nggi xabarlarni tozalash (masalan: `.purge 20`) |
+| `.kurs` / `.valyuta` | Markaziy Bankning bugungi rasmiy valyuta kurslari |
+| `.weather [shahar]` | Shahar bo'yicha jonli ob-havo ma'lumotlari |
+| `.voice <matn>` | Matnni inson ovozidagi audio (Voice Note) ga aylantirish |
 | `.text` | Ovozli xabarga reply qilinsa, uni matnga o'giradi |
-| `.summary [soni]` | Chatdagi so'nggi xabarlarni xulosalaydi (standart: 50 ta) |
+| `.summary [soni]` | Chatdagi so'nggi xabarlarni tahlil qilib xulosalaydi |
 | `.remind <vaqt> <matn>` | Aqlli eslatma o'rnatish (`.remind 10m dars`) |
-| `.reminders` | Kutilayotgan eslatmalar ro'yxati |
+| `.reminders` | Kutilayotgan faol eslatmalar ro'yxati |
 | `.delremind <ID>` | Belgilangan eslatmani o'chirish |
-| `.tr [til]` | Xabarni o'zbek yoki ko'rsatilgan tilga tarjima qilish |
+| `.tr [til]` | Xabarni tarjima qilish |
 | `.ai <savol>` | Gemini AI ga tezkor savol berish |
 | `.calc <ifoda>` | Matematik ifodalarni hisoblash |
 
@@ -118,7 +155,7 @@ Quyidagi parametrlarni to'ldiring:
 API_ID=12345678
 API_HASH=sizning_api_hash_kodingiz
 GEMINI_API_KEY=sizning_gemini_api_kalitingiz
-GEMINI_MODEL=gemini-3.5-flash
+GEMINI_MODEL=gemini-2.5-flash
 ```
 
 ### 4. Ishga tushirish
@@ -139,32 +176,8 @@ python export_session.py
 ```
 Chiqarilgan qatorni `.env` faylidagi `TELETHON_SESSION=` qatoriga yoki Railway muhit o'zgaruvchilariga qo'shing.
 
-### Linux systemd xizmati sifatida ishga tushirish (VPS uchun):
-`/etc/systemd/system/telegram-userbot.service`:
-```ini
-[Unit]
-Description=Telegram AI Userbot Service
-After=network.target
-
-[Service]
-Type=simple
-User=sadullaef-arch
-WorkingDirectory=/home/sadullaef-arch/telegram-autoreply
-ExecStart=/home/sadullaef-arch/telegram-autoreply/venv/bin/python main.py
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
 ---
 
 ## 🔒 Xavfsizlik va Maxfiylik
 - `.env` fayli va `.session` ma'lumotlari `.gitignore` ga kiritilgan bo'lib, ular hech qachon GitHub repozitoriyasiga chiqmaydi.
 - Ma'lumotlar bazasi (`messages.db`) va kesh fayllari faqat sizning mahalliy tizimingizda xavfsiz saqlanadi.
-
----
-
-## 👨‍💻 Muallif
-Ushbu loyiha maxsus buyurtma asosida professional standartlarda tayyorlandi.
