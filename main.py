@@ -1,7 +1,9 @@
 import os
 import json
 import time
+import sqlite3
 import logging
+from datetime import datetime
 from dotenv import load_dotenv
 
 # Logging sozlash
@@ -11,30 +13,137 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Muhit o'zgaruvchilarini darhol yuklaymiz
+# Muhit o'zgaruvchilarini yuklaymiz
 load_dotenv()
 
 from telethon import TelegramClient, events
 from telethon.tl.types import User
+from telethon.sessions import StringSession
 from ai_helper import generate_ai_reply
 
 USE_AI = os.getenv("USE_AI", "True").lower() in ("true", "1", "yes")
 
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
+
+# Standart xabarlar
+FIRST_TIME_MESSAGE = os.getenv(
+    "FIRST_TIME_MESSAGE",
+    "Assalomu alaykum! Hozirda offline holatdaman. Bo'sh vaqtim bo'lishi bilan xabarlaringizga albatta javob qaytaraman. Rahmat!"
+)
 AUTO_REPLY_MESSAGE = os.getenv(
     "AUTO_REPLY_MESSAGE",
     "Assalomu alaykum! Hozirda bandman. Xabaringizni ko'rishim bilan javob qaytaraman. Rahmat!"
 )
+
 COOLDOWN_MINUTES = int(os.getenv("COOLDOWN_MINUTES", "0"))
 REPLY_ONLY_NON_CONTACTS = os.getenv("REPLY_ONLY_NON_CONTACTS", "False").lower() in ("true", "1", "yes")
 REPLY_GROUP_MENTIONS = os.getenv("REPLY_GROUP_MENTIONS", "False").lower() in ("true", "1", "yes")
 
 CACHE_FILE = os.path.join(os.path.dirname(__file__), "replied_users.json")
+KNOWN_USERS_FILE = os.path.join(os.path.dirname(__file__), "known_users.json")
+DB_FILE = os.path.join(os.path.dirname(__file__), "messages.db")
 SESSION_NAME = os.path.join(os.path.dirname(__file__), "autoreply_session")
 
+# ==========================================
+# 1. SQLite Ma'lumotlar Bazasi (Anti-Delete)
+# ==========================================
+def init_db():
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS saved_messages (
+                    msg_id INTEGER,
+                    chat_id INTEGER,
+                    sender_id INTEGER,
+                    sender_name TEXT,
+                    text TEXT,
+                    created_at TEXT,
+                    PRIMARY KEY (msg_id, chat_id)
+                )
+            """)
+            conn.commit()
+    except Exception as e:
+        logger.error(f"Ma'lumotlar bazasini yaratishda xatolik: {e}")
+
+init_db()
+
+def save_incoming_message(msg_id: int, chat_id: int, sender_id: int, sender_name: str, text: str):
+    """Kelgan har bir xabarni bazaga saqlab boradi (agar o'chirilsa tiklash uchun)."""
+    if not text or text.strip() == "":
+        return
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO saved_messages (msg_id, chat_id, sender_id, sender_name, text, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (msg_id, chat_id, sender_id, sender_name, text, now_str)
+            )
+            conn.commit()
+    except Exception as e:
+        logger.error(f"Xabarni DB ga saqlashda xatolik: {e}")
+
+def get_saved_message(msg_id: int):
+    """O'chirilgan xabarni bazadan qidiradi."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT sender_name, sender_id, text, created_at FROM saved_messages WHERE msg_id = ?", (msg_id,))
+            row = cursor.fetchone()
+            if row:
+                return {
+                    "sender_name": row[0],
+                    "sender_id": row[1],
+                    "text": row[2],
+                    "created_at": row[3]
+                }
+    except Exception as e:
+        logger.error(f"Xabarni DB dan olishda xatolik: {e}")
+    return None
+
+# ==========================================
+# 2. Birinchi marta yozganlarni aniqlash
+# ==========================================
+def load_known_users() -> set:
+    if os.path.exists(KNOWN_USERS_FILE):
+        try:
+            with open(KNOWN_USERS_FILE, "r", encoding="utf-8") as f:
+                return set(json.load(f))
+        except Exception as e:
+            logger.warning(f"known_users.json ni o'qishda xatolik: {e}")
+    return set()
+
+def save_known_users(users: set):
+    try:
+        with open(KNOWN_USERS_FILE, "w", encoding="utf-8") as f:
+            json.dump(list(users), f)
+    except Exception as e:
+        logger.error(f"known_users.json ni saqlashda xatolik: {e}")
+
+known_users = load_known_users()
+
+async def check_is_first_time(chat_id: int, user_id: int) -> bool:
+    """Foydalanuvchi birinchi marta yozayotganini tekshiradi."""
+    uid_str = str(user_id)
+    if uid_str in known_users:
+        return False
+
+    is_first = False
+    try:
+        messages = await client.get_messages(chat_id, limit=2)
+        if len(messages) <= 1:
+            is_first = True
+    except Exception as e:
+        logger.warning(f"Chat tarixini olishda xatolik: {e}")
+
+    known_users.add(uid_str)
+    save_known_users(known_users)
+    return is_first
+
+# ==========================================
+# 3. Cooldown va Kesh boshqaruvi
+# ==========================================
 def load_cache() -> dict:
-    """Oldin javob berilgan foydalanuvchilar vaqtlari keshini yuklaydi."""
     if os.path.exists(CACHE_FILE):
         try:
             with open(CACHE_FILE, "r", encoding="utf-8") as f:
@@ -44,18 +153,15 @@ def load_cache() -> dict:
     return {}
 
 def save_cache(cache: dict):
-    """Keshni faylga saqlaydi."""
     try:
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(cache, f, ensure_ascii=False, indent=2)
     except Exception as e:
         logger.error(f"Keshni saqlashda xatolik: {e}")
 
-# Keshni xotiraga yuklash
 replied_users = load_cache()
 
 def clean_expired_cache():
-    """Muddati o'tgan kesh yozuvlarini tozalaydi."""
     now = time.time()
     cutoff = now - (COOLDOWN_MINUTES * 60)
     keys_to_delete = [uid for uid, timestamp in replied_users.items() if timestamp < cutoff]
@@ -65,7 +171,6 @@ def clean_expired_cache():
         save_cache(replied_users)
 
 def should_reply(user_id: int) -> bool:
-    """Foydalanuvchiga javob berish vaqti kelganligini tekshiradi."""
     if COOLDOWN_MINUTES <= 0:
         return True
     clean_expired_cache()
@@ -75,18 +180,15 @@ def should_reply(user_id: int) -> bool:
     return (time.time() - last_time) >= (COOLDOWN_MINUTES * 60)
 
 def record_reply(user_id: int):
-    """Foydalanuvchiga javob berilgan vaqtni qayd qiladi."""
     replied_users[str(user_id)] = time.time()
     save_cache(replied_users)
 
+# ==========================================
+# 4. Validatsiya va TelegramClient
+# ==========================================
 def validate_credentials():
     if not API_ID or not API_HASH or API_ID.strip() == "" or API_HASH.strip() == "":
-        logger.error(
-            "\n" + "=" * 60 + "\n"
-            "XATOLIK: .env faylida API_ID yoki API_HASH ko'rsatilmagan!\n"
-            "Iltimos, https://my.telegram.org saytiga kiring, API ma'lumotlarini oling\n"
-            "va ularni .env fayliga kiriting.\n" + "=" * 60
-        )
+        logger.error("\nXATOLIK: .env faylida API_ID yoki API_HASH ko'rsatilmagan!\n")
         return False
     try:
         int(API_ID)
@@ -94,8 +196,6 @@ def validate_credentials():
         logger.error("XATOLIK: API_ID faqat raqamlardan iborat bo'lishi kerak!")
         return False
     return True
-
-from telethon.sessions import StringSession
 
 if not validate_credentials():
     exit(1)
@@ -112,13 +212,36 @@ else:
 
 client = TelegramClient(session_target, int(API_ID), API_HASH)
 
+# ==========================================
+# 5. O'chirilgan xabarlarni tutish (Anti-Delete)
+# ==========================================
+@client.on(events.MessageDeleted)
+async def deleted_message_handler(event):
+    """Suhbatdosh biror xabarini o'chirsa, uni 'Saqlangan xabarlar'ga yuboradi."""
+    for msg_id in event.deleted_ids:
+        saved = get_saved_message(msg_id)
+        if saved and saved.get("text"):
+            logger.info(f"O'chirilgan xabar tutildi! Yuboruvchi: {saved['sender_name']} (Msg ID: {msg_id})")
+            alert_text = (
+                f"🗑 **O'chirilgan xabar aniqlandi!**\n\n"
+                f"👤 **Yuboruvchi:** {saved['sender_name']} (ID: `{saved['sender_id']}`)\n"
+                f"⏰ **Yozilgan vaqti:** {saved['created_at']}\n"
+                f"💬 **O'chirilgan matn:**\n\"{saved['text']}\""
+            )
+            try:
+                await client.send_message("me", alert_text)
+            except Exception as e:
+                logger.error(f"Saqlangan xabarlarga o'chirilgan xabarni yuborishda xatolik: {e}")
+
+# ==========================================
+# 6. Yangi xabarlarga avto-javob
+# ==========================================
 @client.on(events.NewMessage(incoming=True))
 async def auto_reply_handler(event):
-    # O'zimiz yuborgan xabarlarni inkor qilish
     if event.out:
         return
 
-    # Guruhlarni tekshirish (agar yoqilgan bo'lsa, faqat murojaatlarga javob beradi)
+    # Guruhlarni tekshirish (agar yoqilgan bo'lsa)
     if not event.is_private:
         if not REPLY_GROUP_MENTIONS:
             return
@@ -137,7 +260,7 @@ async def auto_reply_handler(event):
     if not sender or not isinstance(sender, User):
         return
 
-    # Botlarni va rasmiy Telegram servis xabarlarini inkor qilish
+    # Botlar va Telegram rasmiy servislarini inkor qilish
     if sender.bot or sender.id in (777000, 42777):
         return
 
@@ -145,30 +268,40 @@ async def auto_reply_handler(event):
     if sender.id == me.id:
         return
 
+    incoming_text = event.raw_text or ""
+    sender_name = sender.first_name or "Foydalanuvchi"
+
+    # Xabarni ma'lumotlar bazasiga saqlaymiz (Anti-Delete uchun)
+    save_incoming_message(event.id, event.chat_id, sender.id, sender_name, incoming_text)
+
     # Kontaktda mavjud bo'lganlarni inkor qilish tekshiruvi (agar sozlamada yoqilgan bo'lsa)
     if REPLY_ONLY_NON_CONTACTS and sender.contact:
-        logger.info(f"Foydalanuvchi {sender.first_name} ({sender.id}) kontaktlarda mavjud, javob o'tkazib yuborildi.")
+        logger.info(f"Foydalanuvchi {sender_name} ({sender.id}) kontaktlarda mavjud, javob o'tkazib yuborildi.")
         return
 
     # Cooldown (qayta yuborish vaqti) tekshiruvi (agar > 0 bo'lsa)
     if not should_reply(sender.id):
-        logger.info(f"Foydalanuvchi {sender.first_name} ({sender.id}) yaqinda javob olgan (cooldown faol).")
+        logger.info(f"Foydalanuvchi {sender_name} ({sender.id}) yaqinda javob olgan (cooldown faol).")
         return
 
-    incoming_text = event.raw_text or ""
-    sender_name = sender.first_name or "Foydalanuvchi"
+    # Birinchi marta yozayotganini tekshiramiz
+    is_first_time = await check_is_first_time(event.chat_id, sender.id)
+    if is_first_time:
+        logger.info(f"Foydalanuvchi {sender_name} ({sender.id}) birinchi marta yozmoqda! (Offline xabari tayyorlanadi)")
 
     logger.info(f"Yangi xabar olindi: {sender_name} (ID: {sender.id}) -> '{incoming_text[:50]}'")
 
-    # AI orqali javob olishga harakat qilamiz
     reply_text = None
     if USE_AI:
-        logger.info("Gemini AI orqali aqlli javob tayyorlanmoqda...")
-        reply_text = await generate_ai_reply(sender_name, incoming_text)
+        logger.info(f"Gemini AI orqali aqlli javob tayyorlanmoqda (Birinchi marta: {is_first_time})...")
+        reply_text = await generate_ai_reply(sender_name, incoming_text, is_first_time=is_first_time)
 
-    # Agar AI o'chirilgan bo'lsa yoki xatolik bo'lsa, zaxira andozadan foydalanamiz
+    # Agar AI ishlamasa yoki o'chiq bo'lsa zaxira andozadan foydalanamiz
     if not reply_text:
-        reply_text = AUTO_REPLY_MESSAGE
+        if is_first_time:
+            reply_text = FIRST_TIME_MESSAGE
+        else:
+            reply_text = AUTO_REPLY_MESSAGE
         logger.info("Standart andoza xabaridan foydalanilmoqda.")
 
     try:
@@ -184,9 +317,9 @@ async def main():
     logger.info("=" * 50)
     logger.info("Telegram Auto-Reply Userbot muvaffaqiyatli ishga tushdi!")
     logger.info(f"Akkaunt: {me.first_name} (@{me.username or 'username yoq'}) [ID: {me.id}]")
-    logger.info(f"AI rejimi: {'YOQILGAN (Gemini AI)' if USE_AI else 'OCHIRILGAN (Faqat andoza matn)'}")
+    logger.info(f"AI rejimi: {'YOQILGAN (Gemini AI)' if USE_AI else 'OCHIRILGAN'}")
+    logger.info("Anti-Delete tizimi: FAOL (O'chirilgan xabarlar 'Saqlangan xabarlar'ga yuboriladi)")
     logger.info(f"Kutish oralig'i (cooldown): {COOLDOWN_MINUTES} daqiqa")
-    logger.info(f"Faqat begonalarga javob: {REPLY_ONLY_NON_CONTACTS}")
     logger.info("=" * 50)
     logger.info("Xabarlar tinglanmoqda... (To'xtatish uchun Ctrl+C bosing)")
     await client.run_until_disconnected()

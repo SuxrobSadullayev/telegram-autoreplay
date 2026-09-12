@@ -29,7 +29,9 @@ def get_ai_client():
             logger.error(f"Gemini klientini ishga tushirishda xatolik: {e}")
     return _client
 
-async def generate_ai_reply(sender_name: str, message_text: str) -> str | None:
+AI_DISCLAIMER = "\n\n🤖 _[Bu xabar Sun'iy Intellekt (AI) tomonidan avtomatik yuborildi]_"
+
+async def generate_ai_reply(sender_name: str, message_text: str, is_first_time: bool = False) -> str | None:
     """Kelgan xabarga Gemini AI orqali aqlli javob matni tayyorlaydi."""
     use_ai = os.getenv("USE_AI", "True").lower() in ("true", "1", "yes")
     if not use_ai:
@@ -49,11 +51,21 @@ async def generate_ai_reply(sender_name: str, message_text: str) -> str | None:
 
     clean_text = message_text.strip() if message_text else "(Suhbatdosh stiker, rasm yoki emotsiya yubordi)"
 
-    prompt = (
-        f"Suhbatdosh ismi: {sender_name}\n"
-        f"Suhbatdosh yuborgan xabar:\n\"\"\"\n{clean_text}\n\"\"\"\n\n"
-        f"Iltimos, ushbu xabarga mos, chiroyli va qisqa javob qaytaring."
-    )
+    if is_first_time:
+        prompt = (
+            f"Suhbatdosh ismi: {sender_name}\n"
+            f"Suhbatdosh yuborgan birinchi xabar:\n\"\"\"\n{clean_text}\n\"\"\"\n\n"
+            f"MUHIM VAZIFA: Ushbu inson sizga birinchi marta xabar yozmoqda. "
+            f"Unga samimiy salom bering, foydalanuvchi hozirda offline (tarmoqda yo'q) ekanligini, "
+            f"bo'sh vaqti bo'lishi bilan barcha xabarlariga albatta javob qaytarishini xushmuomala tushuntiring. "
+            f"Javobni o'zbek tilida, tabiiy, qisqa va odobli qilib yozing."
+        )
+    else:
+        prompt = (
+            f"Suhbatdosh ismi: {sender_name}\n"
+            f"Suhbatdosh yuborgan xabar:\n\"\"\"\n{clean_text}\n\"\"\"\n\n"
+            f"Iltimos, ushbu xabarga mos, chiroyli va qisqa javob qaytaring."
+        )
 
     try:
         response = await client.aio.models.generate_content(
@@ -62,12 +74,12 @@ async def generate_ai_reply(sender_name: str, message_text: str) -> str | None:
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
                 temperature=0.7,
-                max_output_tokens=1000,
+                max_output_tokens=2048,
                 automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
             )
         )
         if response and response.text:
-            return response.text.strip()
+            return response.text.strip() + AI_DISCLAIMER
     except Exception as e:
         logger.error(f"Gemini AI javob yaratishda xatolik yuz berdi: {e}")
 

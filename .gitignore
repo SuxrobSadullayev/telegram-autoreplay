@@ -12,6 +12,9 @@ env/
 *.log
 autoreply.log
 replied_users.json
+known_users.json
+*.db
+*.db-journal
 
 # Python fayllari
 __pycache__/
