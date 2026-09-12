@@ -99,7 +99,15 @@ if not validate_credentials():
     exit(1)
 
 TELETHON_SESSION_STR = os.getenv("TELETHON_SESSION", "").strip()
-session_target = StringSession(TELETHON_SESSION_STR) if TELETHON_SESSION_STR else SESSION_NAME
+if TELETHON_SESSION_STR:
+    try:
+        session_target = StringSession(TELETHON_SESSION_STR)
+    except Exception as e:
+        logger.error(f"\n{'=' * 60}\nXATOLIK: TELETHON_SESSION kodi noto'g'ri yoki buzilgan!\nTafsilot: {e}\n{'=' * 60}")
+        exit(1)
+else:
+    session_target = SESSION_NAME
+
 client = TelegramClient(session_target, int(API_ID), API_HASH)
 
 @client.on(events.NewMessage(incoming=True))
