@@ -2,6 +2,8 @@ import os
 import json
 import time
 import logging
+from dotenv import load_dotenv
+
 # Logging sozlash
 logging.basicConfig(
     format="%(asctime)s - [%(levelname)s] - %(message)s",
