@@ -23,8 +23,9 @@ AUTO_REPLY_MESSAGE = os.getenv(
     "AUTO_REPLY_MESSAGE",
     "Assalomu alaykum! Hozirda bandman. Xabaringizni ko'rishim bilan javob qaytaraman. Rahmat!"
 )
-COOLDOWN_MINUTES = int(os.getenv("COOLDOWN_MINUTES", "60"))
+COOLDOWN_MINUTES = int(os.getenv("COOLDOWN_MINUTES", "0"))
 REPLY_ONLY_NON_CONTACTS = os.getenv("REPLY_ONLY_NON_CONTACTS", "False").lower() in ("true", "1", "yes")
+REPLY_GROUP_MENTIONS = os.getenv("REPLY_GROUP_MENTIONS", "False").lower() in ("true", "1", "yes")
 
 CACHE_FILE = os.path.join(os.path.dirname(__file__), "replied_users.json")
 SESSION_NAME = os.path.join(os.path.dirname(__file__), "autoreply_session")
@@ -102,13 +103,24 @@ client = TelegramClient(session_target, int(API_ID), API_HASH)
 
 @client.on(events.NewMessage(incoming=True))
 async def auto_reply_handler(event):
-    # Faqat shaxsiy (DM) xabarlarni tekshirish
-    if not event.is_private:
-        return
-
     # O'zimiz yuborgan xabarlarni inkor qilish
     if event.out:
         return
+
+    # Guruhlarni tekshirish (agar yoqilgan bo'lsa, faqat murojaatlarga javob beradi)
+    if not event.is_private:
+        if not REPLY_GROUP_MENTIONS:
+            return
+        me = await client.get_me()
+        is_mentioned = False
+        if event.is_reply:
+            reply_msg = await event.get_reply_message()
+            if reply_msg and reply_msg.sender_id == me.id:
+                is_mentioned = True
+        if not is_mentioned and (event.mentioned or (me.username and f"@{me.username.lower()}" in (event.raw_text or "").lower())):
+            is_mentioned = True
+        if not is_mentioned:
+            return
 
     sender = await event.get_sender()
     if not sender or not isinstance(sender, User):
@@ -122,12 +134,12 @@ async def auto_reply_handler(event):
     if sender.id == me.id:
         return
 
-    # Kontaktda mavjud bo'lganlarni inkor qilish parametri tekshiruvi
+    # Kontaktda mavjud bo'lganlarni inkor qilish tekshiruvi (agar sozlamada yoqilgan bo'lsa)
     if REPLY_ONLY_NON_CONTACTS and sender.contact:
         logger.info(f"Foydalanuvchi {sender.first_name} ({sender.id}) kontaktlarda mavjud, javob o'tkazib yuborildi.")
         return
 
-    # Cooldown (qayta yuborish vaqti) tekshiruvi
+    # Cooldown (qayta yuborish vaqti) tekshiruvi (agar > 0 bo'lsa)
     if not should_reply(sender.id):
         logger.info(f"Foydalanuvchi {sender.first_name} ({sender.id}) yaqinda javob olgan (cooldown faol).")
         return
