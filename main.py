@@ -2,7 +2,6 @@ import os
 import json
 import time
 import asyncio
-import sqlite3
 import logging
 from datetime import datetime
 from dotenv import load_dotenv
@@ -20,7 +19,28 @@ load_dotenv()
 from telethon import TelegramClient, events
 from telethon.tl.types import User
 from telethon.sessions import StringSession
+
 from ai_helper import generate_ai_reply
+from services.voice_service import handle_text_command, transcribe_message
+from services.anti_delete_service import (
+    save_incoming_event,
+    handle_deleted_message_event,
+    clean_old_media_cache
+)
+from services.summary_service import handle_summary_command
+from services.reminder_service import (
+    handle_remind_command,
+    handle_reminders_list_command,
+    handle_delremind_command,
+    reminder_worker_loop
+)
+from services.utility_service import (
+    handle_translate_command,
+    handle_ai_command,
+    handle_calc_command,
+    handle_info_command,
+    handle_help_command
+)
 
 USE_AI = os.getenv("USE_AI", "True").lower() in ("true", "1", "yes")
 
@@ -28,7 +48,7 @@ API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 
 # Boshqaruv sozlamalari
-REPLY_DELAY_SECONDS = int(os.getenv("REPLY_DELAY_SECONDS", "2")) # AI javob berishdan oldin kutadigan qisqa vaqt (soniya)
+REPLY_DELAY_SECONDS = int(os.getenv("REPLY_DELAY_SECONDS", "2"))
 BOT_PAUSED = False
 
 # Standart xabarlar
@@ -47,67 +67,10 @@ REPLY_GROUP_MENTIONS = os.getenv("REPLY_GROUP_MENTIONS", "False").lower() in ("t
 
 CACHE_FILE = os.path.join(os.path.dirname(__file__), "replied_users.json")
 KNOWN_USERS_FILE = os.path.join(os.path.dirname(__file__), "known_users.json")
-DB_FILE = os.path.join(os.path.dirname(__file__), "messages.db")
 SESSION_NAME = os.path.join(os.path.dirname(__file__), "autoreply_session")
 
 # ==========================================
-# 1. SQLite Ma'lumotlar Bazasi (Anti-Delete)
-# ==========================================
-def init_db():
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS saved_messages (
-                    msg_id INTEGER,
-                    chat_id INTEGER,
-                    sender_id INTEGER,
-                    sender_name TEXT,
-                    text TEXT,
-                    created_at TEXT,
-                    PRIMARY KEY (msg_id, chat_id)
-                )
-            """)
-            conn.commit()
-    except Exception as e:
-        logger.error(f"Ma'lumotlar bazasini yaratishda xatolik: {e}")
-
-init_db()
-
-def save_incoming_message(msg_id: int, chat_id: int, sender_id: int, sender_name: str, text: str):
-    """Kelgan har bir xabarni bazaga saqlab boradi (agar o'chirilsa tiklash uchun)."""
-    if not text or text.strip() == "":
-        return
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO saved_messages (msg_id, chat_id, sender_id, sender_name, text, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (msg_id, chat_id, sender_id, sender_name, text, now_str)
-            )
-            conn.commit()
-    except Exception as e:
-        logger.error(f"Xabarni DB ga saqlashda xatolik: {e}")
-
-def get_saved_message(msg_id: int):
-    """O'chirilgan xabarni bazadan qidiradi."""
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT sender_name, sender_id, text, created_at FROM saved_messages WHERE msg_id = ?", (msg_id,))
-            row = cursor.fetchone()
-            if row:
-                return {
-                    "sender_name": row[0],
-                    "sender_id": row[1],
-                    "text": row[2],
-                    "created_at": row[3]
-                }
-    except Exception as e:
-        logger.error(f"Xabarni DB dan olishda xatolik: {e}")
-    return None
-
-# ==========================================
-# 2. Birinchi marta yozganlarni aniqlash
+# 1. Birinchi marta yozganlarni aniqlash
 # ==========================================
 def load_known_users() -> set:
     if os.path.exists(KNOWN_USERS_FILE):
@@ -146,7 +109,7 @@ async def check_is_first_time(chat_id: int, user_id: int) -> bool:
     return is_first
 
 # ==========================================
-# 3. Cooldown va Kesh boshqaruvi
+# 2. Cooldown va Kesh boshqaruvi
 # ==========================================
 def load_cache() -> dict:
     if os.path.exists(CACHE_FILE):
@@ -189,7 +152,7 @@ def record_reply(user_id: int):
     save_cache(replied_users)
 
 # ==========================================
-# 4. Validatsiya va TelegramClient
+# 3. Validatsiya va TelegramClient
 # ==========================================
 def validate_credentials():
     if not API_ID or not API_HASH or API_ID.strip() == "" or API_HASH.strip() == "":
@@ -218,55 +181,114 @@ else:
 client = TelegramClient(session_target, int(API_ID), API_HASH)
 
 # ==========================================
-# 5. O'chirilgan xabarlarni tutish (Anti-Delete)
+# 4. O'chirilgan xabarlarni tutish (Anti-Delete)
 # ==========================================
 @client.on(events.MessageDeleted)
 async def deleted_message_handler(event):
-    """Suhbatdosh biror xabarini o'chirsa, uni 'Saqlangan xabarlar'ga yuboradi."""
-    for msg_id in event.deleted_ids:
-        saved = get_saved_message(msg_id)
-        if saved and saved.get("text"):
-            logger.info(f"O'chirilgan xabar tutildi! Yuboruvchi: {saved['sender_name']} (Msg ID: {msg_id})")
-            alert_text = (
-                f"🗑 **O'chirilgan xabar aniqlandi!**\n\n"
-                f"👤 **Yuboruvchi:** {saved['sender_name']} (ID: `{saved['sender_id']}`)\n"
-                f"⏰ **Yozilgan vaqti:** {saved['created_at']}\n"
-                f"💬 **O'chirilgan matn:**\n\"{saved['text']}\""
-            )
-            try:
-                await client.send_message("me", alert_text)
-            except Exception as e:
-                logger.error(f"Saqlangan xabarlarga o'chirilgan xabarni yuborishda xatolik: {e}")
+    """Suhbatdosh biror xabar yoki mediani o'chirsa, uni Saqlangan xabarlarga yuboradi."""
+    await handle_deleted_message_event(client, event)
 
 # ==========================================
-# 6. O'zingiz yozgan xabarlarni kuzatish (Jonli suhbat)
+# 5. Buyruqlar dispetcheri (Commands Handler)
+# ==========================================
+async def dispatch_command(event) -> bool:
+    """Foydalanuvchi buyruqlarini aniqlaydi va tegishli servisga yo'naltiradi."""
+    global BOT_PAUSED
+    raw = (event.raw_text or "").strip()
+    if not raw:
+        return False
+
+    cmd_lower = raw.lower()
+
+    # Boshqaruv buyruqlari
+    if cmd_lower in (".stop", ".pause", "/stop", "/pause"):
+        BOT_PAUSED = True
+        msg = "⏸ **AI Avto-javob vaqtincha to'xtatildi.**\nQayta yoqish uchun `.start` deb yozing."
+        if event.out:
+            await event.edit(msg)
+        else:
+            await event.reply(msg)
+        return True
+
+    if cmd_lower in (".start", ".resume", "/start", "/resume"):
+        BOT_PAUSED = False
+        msg = "▶️ **AI Avto-javob qayta yoqildi!**"
+        if event.out:
+            await event.edit(msg)
+        else:
+            await event.reply(msg)
+        return True
+
+    if cmd_lower in (".help", "/help"):
+        await handle_help_command(event)
+        return True
+
+    if cmd_lower in (".info", "/info"):
+        await handle_info_command(event, BOT_PAUSED)
+        return True
+
+    if cmd_lower.startswith((".text", ".transcribe", ".ovoz")):
+        await handle_text_command(event)
+        return True
+
+    if cmd_lower.startswith(".summary"):
+        await handle_summary_command(event)
+        return True
+
+    if cmd_lower.startswith(".reminders"):
+        await handle_reminders_list_command(event)
+        return True
+
+    if cmd_lower.startswith(".delremind"):
+        await handle_delremind_command(event)
+        return True
+
+    if cmd_lower.startswith(".remind"):
+        await handle_remind_command(event)
+        return True
+
+    if cmd_lower.startswith((".tr", ".translate")):
+        await handle_translate_command(event)
+        return True
+
+    if cmd_lower.startswith(".ai"):
+        await handle_ai_command(event)
+        return True
+
+    if cmd_lower.startswith(".calc"):
+        await handle_calc_command(event)
+        return True
+
+    return False
+
+# ==========================================
+# 6. O'zingiz yozgan xabarlarni kuzatish (Outgoing)
 # ==========================================
 @client.on(events.NewMessage(outgoing=True))
 async def outgoing_handler(event):
-    global BOT_PAUSED
-    if not event.is_private:
+    # Buyruq bo'lsa uni bajaramiz
+    handled = await dispatch_command(event)
+    if handled:
         return
 
-    me = await client.get_me()
-    # O'zingizning "Saqlangan xabarlar"ingizda botni boshqarish
-    if event.chat_id == me.id:
-        cmd = (event.raw_text or "").strip().lower()
-        if cmd in (".stop", ".pause", "/stop", "/pause"):
-            BOT_PAUSED = True
-            await event.reply("⏸ **AI Avto-javob vaqtincha to'xtatildi.**\nQayta yoqish uchun `.start` deb yozing.")
-            return
-        elif cmd in (".start", ".resume", "/start", "/resume"):
-            BOT_PAUSED = False
-            await event.reply("▶️ **AI Avto-javob qayta yoqildi!**")
-            return
-
 # ==========================================
-# 7. Yangi xabarlarga avto-javob
+# 7. Yangi xabarlarga avto-javob va Anti-Delete
 # ==========================================
 @client.on(events.NewMessage(incoming=True))
 async def auto_reply_handler(event):
     if event.out:
         return
+
+    me = await client.get_me()
+
+    # O'zingizning Saqlangan xabarlar (Saved Messages)ingizga kelgan buyruqlar
+    if event.chat_id == me.id:
+        handled = await dispatch_command(event)
+        if handled:
+            return
+
+    # Kelgan barcha xabarlarni Anti-Delete uchun keshga va DB ga saqlaymiz
+    await save_incoming_event(client, event)
 
     if BOT_PAUSED:
         return
@@ -275,7 +297,6 @@ async def auto_reply_handler(event):
     if not event.is_private:
         if not REPLY_GROUP_MENTIONS:
             return
-        me = await client.get_me()
         is_mentioned = False
         if event.is_reply:
             reply_msg = await event.get_reply_message()
@@ -294,31 +315,34 @@ async def auto_reply_handler(event):
     if sender.bot or sender.id in (777000, 42777):
         return
 
-    me = await client.get_me()
     if sender.id == me.id:
         return
 
     incoming_text = event.raw_text or ""
     sender_name = sender.first_name or "Foydalanuvchi"
 
-    # Xabarni ma'lumotlar bazasiga saqlaymiz (Anti-Delete uchun)
-    save_incoming_message(event.id, event.chat_id, sender.id, sender_name, incoming_text)
+    # Agar xabar ovozli bo'lsa va matni bo'lmasa, ovozni transkripsiya qilib AI ga uzatamiz
+    if not incoming_text and (getattr(event.message, "voice", False) or getattr(event.message, "audio", False)):
+        logger.info(f"Ovozli xabar olindi ({sender_name}), transkripsiya qilinmoqda...")
+        voice_text = await transcribe_message(client, event.message)
+        if voice_text:
+            incoming_text = f"[Suhbatdosh ovozli xabar yubordi: \"{voice_text}\"]"
 
-    # Kontaktda mavjud bo'lganlarni inkor qilish tekshiruvi (agar sozlamada yoqilgan bo'lsa)
+    # Kontaktda mavjud bo'lganlarni inkor qilish tekshiruvi
     if REPLY_ONLY_NON_CONTACTS and sender.contact:
         logger.info(f"Foydalanuvchi {sender_name} ({sender.id}) kontaktlarda mavjud, javob o'tkazib yuborildi.")
         return
 
-    # Cooldown (qayta yuborish vaqti) tekshiruvi (agar > 0 bo'lsa)
+    # Cooldown (qayta yuborish vaqti) tekshiruvi
     if not should_reply(sender.id):
         logger.info(f"Foydalanuvchi {sender_name} ({sender.id}) yaqinda javob olgan (cooldown faol).")
         return
 
-    # Qisqa tanaffus (5 soniya) - o'zingiz o'qib, javob yozishingizga imkon beradi
+    # Qisqa tanaffus (jonli suhbatni tekshirish uchun)
     if REPLY_DELAY_SECONDS > 0:
         await asyncio.sleep(REPLY_DELAY_SECONDS)
 
-    # 5 soniyadan so'ng qayta tekshiramiz: balki siz shu vaqt ichida o'zingiz javob yozgandirsiz?
+    # Tanaffusdan so'ng tekshiramiz: balki o'zingiz javob yozgandirsiz?
     recent_msgs = await client.get_messages(event.chat_id, limit=2)
     if any(m.out for m in recent_msgs):
         logger.info(f"Siz {sender_name} ga o'zingiz javob yozdingiz, AI to'xtatildi.")
@@ -351,21 +375,41 @@ async def auto_reply_handler(event):
     except Exception as e:
         logger.error(f"Javob yuborishda xatolik yuz berdi: {e}")
 
+# ==========================================
+# 8. Vaqti-vaqti bilan eski keshni tozalash
+# ==========================================
+async def periodic_cache_cleaner():
+    while True:
+        try:
+            clean_old_media_cache(max_age_hours=48)
+        except Exception as e:
+            logger.error(f"Kesh tozalash davriy xatosi: {e}")
+        await asyncio.sleep(3600 * 12) # Har 12 soatda bir marta
+
+# ==========================================
+# 9. Asosiy ishga tushirish (Main)
+# ==========================================
 async def main():
     await client.start()
     me = await client.get_me()
-    logger.info("=" * 50)
-    logger.info("Telegram Auto-Reply Userbot muvaffaqiyatli ishga tushdi!")
-    logger.info(f"Akkaunt: {me.first_name} (@{me.username or 'username yoq'}) [ID: {me.id}]")
-    logger.info(f"AI rejimi: {'YOQILGAN (Gemini AI)' if USE_AI else 'OCHIRILGAN'}")
-    logger.info("Anti-Delete tizimi: FAOL (O'chirilgan xabarlar 'Saqlangan xabarlar'ga yuboriladi)")
-    logger.info(f"Kutish oralig'i (cooldown): {COOLDOWN_MINUTES} daqiqa")
-    logger.info("=" * 50)
-    logger.info("Xabarlar tinglanmoqda... (To'xtatish uchun Ctrl+C bosing)")
+    logger.info("=" * 60)
+    logger.info("🚀 Telegram AI Userbot muvaffaqiyatli ishga tushdi!")
+    logger.info(f"👤 Egasining akkaunti: {me.first_name} (@{me.username or 'yoq'}) [ID: {me.id}]")
+    logger.info(f"🤖 AI rejimi: {'YOQILGAN (Google Gemini AI)' if USE_AI else 'OCHIRILGAN'}")
+    logger.info("🛡 Anti-Delete tizimi: FAOL (Matn va Media keshlanadi)")
+    logger.info("⏰ Aqlli eslatmalar (Reminders) tizimi: FAOL")
+    logger.info("🎙 Voice-to-Text tizimi: FAOL (.text buyrug'i)")
+    logger.info("📝 Chat Xulosalash tizimi: FAOL (.summary buyrug'i)")
+    logger.info("=" * 60)
+    logger.info("Barcha xabarlar va buyruqlar tinglanmoqda...")
+
+    # Fon xizmatlarini ishga tushiramiz
+    asyncio.create_task(reminder_worker_loop(client))
+    asyncio.create_task(periodic_cache_cleaner())
+
     await client.run_until_disconnected()
 
 if __name__ == "__main__":
-    import asyncio
     try:
         client.loop.run_until_complete(main())
     except KeyboardInterrupt:
