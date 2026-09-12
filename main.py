@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import asyncio
 import sqlite3
 import logging
 from datetime import datetime
@@ -25,6 +26,13 @@ USE_AI = os.getenv("USE_AI", "True").lower() in ("true", "1", "yes")
 
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
+
+# Jonli muloqot sozlamalari (Foydalanuvchiga xalaqit bermaslik uchun)
+ACTIVE_CHAT_MINUTES = int(os.getenv("ACTIVE_CHAT_MINUTES", "15"))
+ACTIVE_CHAT_TIMEOUT = ACTIVE_CHAT_MINUTES * 60  # soniyalarda
+REPLY_DELAY_SECONDS = int(os.getenv("REPLY_DELAY_SECONDS", "5")) # AI javob berishdan oldin kutadigan vaqt
+active_chats = {} # chat_id -> oxirgi yozgan vaqtimiz
+BOT_PAUSED = False
 
 # Standart xabarlar
 FIRST_TIME_MESSAGE = os.getenv(
@@ -234,11 +242,40 @@ async def deleted_message_handler(event):
                 logger.error(f"Saqlangan xabarlarga o'chirilgan xabarni yuborishda xatolik: {e}")
 
 # ==========================================
-# 6. Yangi xabarlarga avto-javob
+# 6. O'zingiz yozgan xabarlarni kuzatish (Jonli suhbat)
+# ==========================================
+@client.on(events.NewMessage(outgoing=True))
+async def outgoing_handler(event):
+    global BOT_PAUSED
+    if not event.is_private:
+        return
+
+    me = await client.get_me()
+    # O'zingizning "Saqlangan xabarlar"ingizda botni boshqarish
+    if event.chat_id == me.id:
+        cmd = (event.raw_text or "").strip().lower()
+        if cmd in (".stop", ".pause", "/stop", "/pause"):
+            BOT_PAUSED = True
+            await event.reply("⏸ **AI Avto-javob vaqtincha to'xtatildi.**\nQayta yoqish uchun `.start` deb yozing.")
+            return
+        elif cmd in (".start", ".resume", "/start", "/resume"):
+            BOT_PAUSED = False
+            await event.reply("▶️ **AI Avto-javob qayta yoqildi!**")
+            return
+
+    # Agar boshqa bir insonga o'zingiz xabar yozsangiz:
+    active_chats[event.chat_id] = time.time()
+    logger.info(f"Siz {event.chat_id} bilan o'zingiz yozishmoqdasiz. AI bu chatda {ACTIVE_CHAT_MINUTES} daqiqa xalaqit bermaydi.")
+
+# ==========================================
+# 7. Yangi xabarlarga avto-javob
 # ==========================================
 @client.on(events.NewMessage(incoming=True))
 async def auto_reply_handler(event):
     if event.out:
+        return
+
+    if BOT_PAUSED:
         return
 
     # Guruhlarni tekshirish (agar yoqilgan bo'lsa)
@@ -274,6 +311,12 @@ async def auto_reply_handler(event):
     # Xabarni ma'lumotlar bazasiga saqlaymiz (Anti-Delete uchun)
     save_incoming_message(event.id, event.chat_id, sender.id, sender_name, incoming_text)
 
+    # Jonli muloqot tekshiruvi: Agar siz bu suhbatdoshga oxirgi vaqtda o'zingiz yozgan bo'lsangiz:
+    last_my_msg = active_chats.get(event.chat_id, 0)
+    if (time.time() - last_my_msg) < ACTIVE_CHAT_TIMEOUT:
+        logger.info(f"Siz {sender_name} bilan o'zingiz jonli yozishmoqdasiz. AI aralashmaydi.")
+        return
+
     # Kontaktda mavjud bo'lganlarni inkor qilish tekshiruvi (agar sozlamada yoqilgan bo'lsa)
     if REPLY_ONLY_NON_CONTACTS and sender.contact:
         logger.info(f"Foydalanuvchi {sender_name} ({sender.id}) kontaktlarda mavjud, javob o'tkazib yuborildi.")
@@ -282,6 +325,17 @@ async def auto_reply_handler(event):
     # Cooldown (qayta yuborish vaqti) tekshiruvi (agar > 0 bo'lsa)
     if not should_reply(sender.id):
         logger.info(f"Foydalanuvchi {sender_name} ({sender.id}) yaqinda javob olgan (cooldown faol).")
+        return
+
+    # Qisqa tanaffus (5 soniya) - o'zingiz o'qib, javob yozishingizga imkon beradi
+    if REPLY_DELAY_SECONDS > 0:
+        await asyncio.sleep(REPLY_DELAY_SECONDS)
+
+    # 5 soniyadan so'ng qayta tekshiramiz: balki siz shu vaqt ichida o'zingiz javob yozgandirsiz?
+    recent_msgs = await client.get_messages(event.chat_id, limit=2)
+    if any(m.out for m in recent_msgs):
+        logger.info(f"Siz {sender_name} ga o'zingiz javob yozdingiz, AI to'xtatildi.")
+        active_chats[event.chat_id] = time.time()
         return
 
     # Birinchi marta yozayotganini tekshiramiz
