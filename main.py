@@ -63,6 +63,7 @@ from services.search_service import handle_google_command, handle_wiki_command
 from services.profile_service import handle_bio_command, handle_name_command, handle_photo_command
 from services.converter_service import handle_topdf_command, handle_tomp3_command
 from services.seen_service import handle_seen_command
+from services.spy_service import handle_spy_command
 
 USE_AI = os.getenv("USE_AI", "True").lower() in ("true", "1", "yes")
 
@@ -349,6 +350,11 @@ async def dispatch_command(event) -> bool:
     # 11. Kuzatuv
     if cmd_lower.startswith(".seen"):
         await handle_seen_command(event)
+        return True
+
+    # 12. Kanal josuslik xizmati (kim ko'rayotganini aniqlash)
+    if cmd_lower.startswith(".spy"):
+        await handle_spy_command(event)
         return True
 
     return False
