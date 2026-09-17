@@ -370,7 +370,7 @@ async def handle_spy_command(event):
                 elif "Kick" in action_class or "Ban" in action_class:
                     lines.append(f"  🚫 {event_time} — {user_str} **chetlashtirildi**")
         else:
-            lines.append("  _Admin log ma'lumotlari topilmadi (admin huquqlari kerak)._")
+            lines.append("  _So'nggi 48 soatda kirish/chiqish hodisalari qayd etilmagan._")
 
         lines.append("")
 
@@ -393,31 +393,41 @@ async def handle_spy_command(event):
             if msg_text:
                 lines.append(f"   💬 _{msg_text}_")
 
-            # 4.1. Reaksiyalarni tekshirish (Kanalga a'zo bo'lmay reaksiya bosganlar!)
-            reactions = await _get_message_reactions(event.client, channel, msg.id)
-            if reactions:
-                lines.append("   ❤️ **Reaksiya qoldirganlar:**")
-                for r in reactions:
-                    uid = r["user_id"]
-                    user_obj = r["user"]
-                    emoji = r["emoji"]
-                    r_time = _format_time(r["date"]) if r["date"] else ""
+            # 4.1. Reaksiyalar (Emodzilar va hisoblagich)
+            if hasattr(msg, "reactions") and msg.reactions and msg.reactions.results:
+                rx_summary = " ".join(
+                    f"{r.reaction.emoticon if hasattr(r.reaction, 'emoticon') else '⭐'} × {r.count}"
+                    for r in msg.reactions.results
+                )
+                lines.append(f"   ❤️ **Reaksiyalar:** {rx_summary}")
 
-                    if uid == me.id:
-                        continue
+                # Reaksiyachi profillarni olish (guruhlarda ishlaydi, kanallarda esa Telegram yashiradi)
+                reactions = await _get_message_reactions(event.client, channel, msg.id)
+                if reactions:
+                    lines.append("   👥 **Reaksiya qoldirgan profillar:**")
+                    for r in reactions:
+                        uid = r["user_id"]
+                        user_obj = r["user"]
+                        emoji = r["emoji"]
+                        r_time = _format_time(r["date"]) if r["date"] else ""
 
-                    # Profil matni
-                    if user_obj:
-                        user_desc = _format_user(user_obj)
-                    else:
-                        user_desc = f"👤 ID: `{uid}`"
+                        if uid == me.id:
+                            continue
 
-                    # Obunachimi yoki obunasiz kuzatuvchimi?
-                    if uid not in participants_ids:
-                        lines.append(f"     🚨 **[OBUNASIZ KUZATUVCHI]** {emoji} {user_desc} ⏰ {r_time}")
-                        lurker_reactions_found.append((user_desc, emoji, msg.id))
-                    else:
-                        lines.append(f"     ✅ {emoji} {user_desc} ⏰ {r_time}")
+                        # Profil matni
+                        if user_obj:
+                            user_desc = _format_user(user_obj)
+                        else:
+                            user_desc = f"👤 ID: `{uid}`"
+
+                        # Obunachimi yoki obunasiz kuzatuvchimi?
+                        if uid not in participants_ids:
+                            lines.append(f"     🚨 **[OBUNASIZ KUZATUVCHI]** {emoji} {user_desc} ⏰ {r_time}")
+                            lurker_reactions_found.append((user_desc, emoji, msg.id))
+                        else:
+                            lines.append(f"     ✅ {emoji} {user_desc} ⏰ {r_time}")
+                else:
+                    lines.append("   🔒 _Telegram qoidasi: Kanallarda reaksiyalar anonim (server hatto kanal egasiga ham profillarni bermaydi)_")
 
             # 4.2. Kichik guruh bo'lsa o'qiganlar
             viewers = await _get_message_viewers(event.client, channel, msg.id)
