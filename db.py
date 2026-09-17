@@ -58,6 +58,18 @@ def init_all_databases():
                 )
             """)
 
+            # 5. Spy Watchlist: gumondorlar ro'yxati va korrelyatsiya statistikasi
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS spy_watchlist (
+                    user_id INTEGER PRIMARY KEY,
+                    username TEXT,
+                    name TEXT,
+                    online_hits INTEGER DEFAULT 0,
+                    total_checks INTEGER DEFAULT 0,
+                    added_at TEXT
+                )
+            """)
+
             # Migratsiya: saved_messages jadvaliga yangi ustunlar kerak bo'lsa qo'shish
             cursor = conn.cursor()
             cursor.execute("PRAGMA table_info(saved_messages)")
@@ -188,6 +200,90 @@ async def db_save_replied_user(user_id: str, timestamp: float):
 
 async def db_clean_expired_replied_users(cutoff: float):
     await asyncio.to_thread(_sync_clean_expired_replied_users, cutoff)
+
+# ==========================================
+# Spy Watchlist asinxron boshqaruvi
+# ==========================================
+def _sync_add_spy_suspect(user_id: int, username: str, name: str) -> bool:
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO spy_watchlist (user_id, username, name, added_at)
+                VALUES (?, ?, ?, datetime('now'))
+            """, (user_id, username, name))
+            conn.commit()
+            return True
+    except Exception as e:
+        logger.error(f"Suspect saqlashda xatolik: {e}")
+        return False
+
+def _sync_remove_spy_suspect(user_id: int) -> bool:
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("DELETE FROM spy_watchlist WHERE user_id = ?", (user_id,))
+            conn.commit()
+            return True
+    except Exception as e:
+        logger.error(f"Suspect o'chirishda xatolik: {e}")
+        return False
+
+def _sync_get_spy_suspects() -> list[dict]:
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT user_id, username, name, online_hits, total_checks, added_at FROM spy_watchlist")
+            return [dict(r) for r in cursor.fetchall()]
+    except Exception as e:
+        logger.error(f"Suspects ro'yxatini olishda xatolik: {e}")
+        return []
+
+def _sync_clear_spy_suspects() -> bool:
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("DELETE FROM spy_watchlist")
+            conn.commit()
+            return True
+    except Exception as e:
+        logger.error(f"Suspects tozalashda xatolik: {e}")
+        return False
+
+def _sync_record_spy_hit(user_id: int):
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute("UPDATE spy_watchlist SET online_hits = online_hits + 1 WHERE user_id = ?", (user_id,))
+            conn.commit()
+    except Exception as e:
+        logger.error(f"Spy hit yozishda xatolik: {e}")
+
+def _sync_increment_spy_checks(user_ids: list[int]):
+    if not user_ids:
+        return
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            placeholders = ",".join("?" for _ in user_ids)
+            conn.execute(f"UPDATE spy_watchlist SET total_checks = total_checks + 1 WHERE user_id IN ({placeholders})", user_ids)
+            conn.commit()
+    except Exception as e:
+        logger.error(f"Spy checks oshirishda xatolik: {e}")
+
+async def db_add_spy_suspect(user_id: int, username: str, name: str) -> bool:
+    return await asyncio.to_thread(_sync_add_spy_suspect, user_id, username, name)
+
+async def db_remove_spy_suspect(user_id: int) -> bool:
+    return await asyncio.to_thread(_sync_remove_spy_suspect, user_id)
+
+async def db_get_spy_suspects() -> list[dict]:
+    return await asyncio.to_thread(_sync_get_spy_suspects)
+
+async def db_clear_spy_suspects() -> bool:
+    return await asyncio.to_thread(_sync_clear_spy_suspects)
+
+async def db_record_spy_hit(user_id: int):
+    await asyncio.to_thread(_sync_record_spy_hit, user_id)
+
+async def db_increment_spy_checks(user_ids: list[int]):
+    await asyncio.to_thread(_sync_increment_spy_checks, user_ids)
 
 # Modul yuklanganda bazani initsializatsiya qilamiz
 init_all_databases()
